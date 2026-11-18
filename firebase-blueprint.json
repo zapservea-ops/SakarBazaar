@@ -1,0 +1,222 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized SakarBazaar newsroom administrator or editor profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 200 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "editor"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "createdAt"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "Newsroom editorial article with verification workflow and source attribution",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 5, "maxLength": 220 },
+        "slug": { "type": "string", "minLength": 3, "maxLength": 160, "pattern": "^[a-z0-9\\-]+$" },
+        "summary": { "type": "string", "minLength": 10, "maxLength": 800 },
+        "body": { "type": "string", "minLength": 20, "maxLength": 20000 },
+        "category": { "type": "string", "enum": ["Markets", "IPO", "Corporate", "Economy", "RBI", "Banking", "Technology", "Personal finance"] },
+        "tags": { "type": "array", "description": "Up to 12 curated editorial tags" },
+        "keywords": { "type": "array", "description": "Up to 20 search index keywords" },
+        "entities": { "type": "array", "description": "Up to 20 extracted financial entities" },
+        "author": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "status": { "type": "string", "enum": ["Draft", "Awaiting Verification", "Verified", "Published", "Archived"] },
+        "verificationStatus": { "type": "string", "enum": ["awaiting_verification", "verified", "unverified"] },
+        "sourceName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "sourceUrl": { "type": "string", "maxLength": 500 },
+        "officialSources": { "type": "array", "description": "Up to 8 official regulatory or exchange citations" },
+        "mediaId": { "type": "string", "maxLength": 128 },
+        "language": { "type": "string", "enum": ["en", "hi"] },
+        "createdByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "publishedAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title",
+        "slug",
+        "summary",
+        "body",
+        "category",
+        "author",
+        "status",
+        "verificationStatus",
+        "sourceName",
+        "language",
+        "createdByUid",
+        "updatedAt",
+        "createdAt"
+      ]
+    },
+    "IpoRecord": {
+      "title": "IpoRecord",
+      "description": "Primary market IPO dossier with explicit verification gating",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "slug": { "type": "string", "minLength": 3, "maxLength": 160, "pattern": "^[a-z0-9\\-]+$" },
+        "segment": { "type": "string", "enum": ["Mainboard", "SME"] },
+        "status": { "type": "string", "enum": ["Awaiting Verification", "Upcoming", "Open", "Closed", "Listed"] },
+        "issueSize": { "type": "string", "maxLength": 100 },
+        "priceBand": { "type": "string", "maxLength": 100 },
+        "openingDate": { "type": "string", "maxLength": 64 },
+        "closingDate": { "type": "string", "maxLength": 64 },
+        "allotmentDate": { "type": "string", "maxLength": 64 },
+        "listingDate": { "type": "string", "maxLength": 64 },
+        "sellingShareholder": { "type": "string", "maxLength": 160 },
+        "offerType": { "type": "string", "maxLength": 120 },
+        "officialDocuments": { "type": "array", "description": "Up to 6 verified DRHP/RHP/exchange links" },
+        "sourceName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "sourceUrl": { "type": "string", "maxLength": 500 },
+        "verificationStatus": { "type": "string", "enum": ["awaiting_verification", "verified"] },
+        "lastVerifiedAt": { "type": "string", "maxLength": 64 },
+        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "companyName",
+        "slug",
+        "segment",
+        "status",
+        "sourceName",
+        "verificationStatus",
+        "updatedByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MarketInstrument": {
+      "title": "MarketInstrument",
+      "description": "Verified Indian index, macro gauge, or listed equity catalog entry",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "symbol": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "exchange": { "type": "string", "enum": ["NSE", "BSE", "MCX", "FBIL", "N/A"] },
+        "instrumentType": { "type": "string", "enum": ["index", "currency", "commodity", "equity"] },
+        "currentValue": { "type": "number" },
+        "change": { "type": "number" },
+        "changePercent": { "type": "number" },
+        "currency": { "type": "string", "maxLength": 16 },
+        "source": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "freshnessStatus": { "type": "string", "enum": ["live", "delayed", "stale", "unavailable"] },
+        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "name",
+        "symbol",
+        "exchange",
+        "instrumentType",
+        "currency",
+        "source",
+        "freshnessStatus",
+        "updatedByUid",
+        "updatedAt"
+      ]
+    },
+    "MediaAsset": {
+      "title": "MediaAsset",
+      "description": "Uploaded editorial video or visual media metadata",
+      "type": "object",
+      "properties": {
+        "fileName": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "storagePath": { "type": "string", "minLength": 3, "maxLength": 300 },
+        "mediaType": { "type": "string", "enum": ["video/mp4", "image/png", "image/jpeg", "image/webp"] },
+        "duration": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "poster": { "type": "string", "maxLength": 300 },
+        "captions": { "type": "string", "maxLength": 4000 },
+        "transcript": { "type": "string", "maxLength": 10000 },
+        "associatedArticleId": { "type": "string", "maxLength": 128 },
+        "uploadedByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "fileName",
+        "storagePath",
+        "mediaType",
+        "uploadedByUid",
+        "createdAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable editorial audit trail recording draft, verification, and publishing actions",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create_draft", "ai_brief", "mark_awaiting_verification", "verify", "publish", "archive", "update"] },
+        "entityType": { "type": "string", "enum": ["article", "ipo", "media", "marketInstrument"] },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorEmail": { "type": "string", "format": "email", "minLength": 5, "maxLength": 200 },
+        "previousStatus": { "type": "string", "maxLength": 48 },
+        "nextStatus": { "type": "string", "minLength": 2, "maxLength": 48 },
+        "summary": { "type": "string", "minLength": 3, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "action",
+        "entityType",
+        "entityId",
+        "actorUid",
+        "actorEmail",
+        "nextStatus",
+        "summary",
+        "createdAt"
+      ]
+    },
+    "ContactSubmission": {
+      "title": "ContactSubmission",
+      "description": "Reader editorial correction, IPO coverage request, or enquiry submission",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 200 },
+        "topic": { "type": "string", "enum": ["Editorial feedback", "Data correction", "IPO desk tip", "General enquiry"] },
+        "message": { "type": "string", "minLength": 10, "maxLength": 3000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "topic", "message", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized editors and administrators for the SakarBazaar editorial desk"
+    },
+    "/articles/{articleId}": {
+      "schema": { "$ref": "#/entities/Article" },
+      "description": "Newsroom articles; only Published articles are publicly readable"
+    },
+    "/ipos/{ipoId}": {
+      "schema": { "$ref": "#/entities/IpoRecord" },
+      "description": "IPO records; only officially verified records are publicly readable without editor access"
+    },
+    "/marketInstruments/{instrumentId}": {
+      "schema": { "$ref": "#/entities/MarketInstrument" },
+      "description": "Market instrument catalog entries and synced market snapshots"
+    },
+    "/media/{mediaId}": {
+      "schema": { "$ref": "#/entities/MediaAsset" },
+      "description": "Uploaded editorial video and image asset metadata"
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Append-only editorial action audit log restricted to authorized admins/editors"
+    },
+    "/contactSubmissions/{submissionId}": {
+      "schema": { "$ref": "#/entities/ContactSubmission" },
+      "description": "Reader contact submissions readable only by authorized administrators"
+    }
+  }
+}

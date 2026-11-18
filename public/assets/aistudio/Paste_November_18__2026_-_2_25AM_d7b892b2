@@ -1,0 +1,1142 @@
+# SAKARBAZAAR — PHASE 3 IMPLEMENTATION
+## Mobile-First UX, Functional Search, Real News Publishing, Removal of Fake Data, and Market Data Readiness
+
+You are working on the existing SakarBazaar application.
+
+Phase 1 and Phase 2 have already been completed. Your task is to improve and extend the existing application, not rebuild it.
+
+**This is a production-quality improvement task. Preserve all working functionality and the established editorial identity.**
+
+---
+
+# 1. EXISTING TECHNICAL ARCHITECTURE — DO NOT CHANGE
+
+The current application uses:
+
+- Vite 8
+- React 19
+- TypeScript
+- Tailwind CSS v4
+- React Router or the existing routing implementation
+- Existing SakarBazaar context and shared components
+- Existing localStorage persistence
+- Existing editorial design system
+
+The current application has these important files:
+
+- `src/App.tsx`
+- `src/types/sakarbazaar.ts`
+- `src/data/sampleData.ts`
+- `src/data/i18n.ts`
+- `src/context/SakarBazaarContext.tsx`
+- `src/utils/marketFormat.ts`
+- `src/components/`
+- `src/pages/`
+- `src/index.css`
+
+The original HTML prototype must remain untouched:
+
+`/public/assets/aistudio/SakarBazaar_homepage_c065fb76.html`
+
+### Mandatory instructions
+
+1. Do not migrate to Next.js or another framework.
+2. Do not delete the existing working pages and components.
+3. Do not redesign the entire website from scratch.
+4. Do not remove working routes.
+5. Reuse the existing typography, colors, design tokens, and editorial identity.
+6. Keep the website lightweight and mobile-first.
+7. Create a Git checkpoint or backup before making substantial changes.
+8. Inspect the existing code before editing it.
+9. Avoid unnecessary package installations.
+10. Do not claim that an integration works unless you have tested it.
+
+---
+
+# 2. FIRST: AUDIT THE EXISTING APPLICATION
+
+Before making changes, inspect the complete project.
+
+Identify:
+
+- Every location containing sample or fictional financial data.
+- Every fictional IPO and company.
+- Every hardcoded market price or index value.
+- Every fake FII/DII figure.
+- Every fake IPO subscription figure.
+- Every invented calendar event.
+- Every subscription or newsletter component.
+- Existing search implementation and searchable datasets.
+- Existing article and explainer components.
+- Existing Firebase configuration and integrations.
+- Existing image and video assets.
+- Existing responsive CSS and layout problems.
+
+Use the screenshots I have attached as visual references.
+
+The screenshots show several problems that must be addressed:
+
+- Search for `ipos` returns zero results even though IPO content exists.
+- Mobile layouts have poor usability and excessive scrolling.
+- Some tables and content sections are difficult to read on narrow screens.
+- Certain article and explainer pages have awkward content widths and spacing.
+- Navigation and returning to the homepage are not sufficiently obvious.
+- Several components still look like demonstrations rather than a functioning financial newsroom.
+
+Do not assume the current implementation is correct simply because Phase 2 passed its tests.
+
+---
+
+# 3. PRIORITY ONE: MAKE THE ENTIRE WEBSITE MOBILE-FIRST
+
+This is one of the most important requirements.
+
+SakarBazaar must feel like a professionally designed Indian financial news application when accessed from a mobile phone.
+
+Do not simply shrink the desktop layout.
+
+Reconsider the mobile information hierarchy and interactions.
+
+### Test these viewport widths
+
+- 360px
+- 390px
+- 430px
+- 768px
+- 1024px
+- 1440px
+
+### Header and navigation
+
+On mobile:
+
+- Use a compact, clear header.
+- Keep the SakarBazaar logo visible.
+- Make search easily accessible.
+- Provide a clear, accessible navigation menu.
+- Avoid excessive navigation rows.
+- Ensure navigation items do not overflow.
+- Keep important sections accessible with minimal interaction.
+- Make the active section visually identifiable.
+- Provide an obvious way to return to the homepage.
+
+If a mobile menu is necessary, implement a proper accessible menu with open/close behavior, keyboard support, and appropriate focus management.
+
+### Homepage
+
+Improve:
+
+- Hero story presentation.
+- Market ticker.
+- Latest news cards.
+- Market snapshot.
+- IPO section.
+- Calendar.
+- Editorial content hierarchy.
+
+On mobile:
+
+- Use readable cards.
+- Avoid cramped columns.
+- Keep headlines readable.
+- Avoid oversized empty areas.
+- Avoid unnecessarily tall sections.
+- Use clear section headings.
+- Make buttons and links easy to tap.
+
+### News and article pages
+
+Improve:
+
+- Headline wrapping.
+- Article content width.
+- Author and timestamp presentation.
+- Image and video sizing.
+- Key takeaways.
+- Paragraph spacing.
+- Related stories.
+- Share and bookmark controls.
+
+The article should be comfortable to read on a phone without zooming.
+
+### IPO pages
+
+The existing IPO tables are difficult to use on mobile.
+
+Do not simply squeeze desktop tables into narrow screens.
+
+Create responsive IPO cards for mobile.
+
+Each card should clearly display the available verified information:
+
+- Company name.
+- Exchange or segment, where applicable.
+- IPO status.
+- Issue size.
+- Price band.
+- Opening date.
+- Closing date.
+- Listing date, when verified.
+- Official source or document link, when available.
+
+Only show fields supported by verified data.
+
+Desktop may retain a table if it remains readable.
+
+### Explainers
+
+Improve the mobile reading experience:
+
+- Clear typography.
+- Readable paragraphs.
+- Responsive illustrations.
+- Properly spaced key takeaways.
+- Clear navigation between explainers.
+- Related explainer links.
+- No oversized blank areas.
+
+### Watchlist
+
+Make adding and removing saved articles, indices, and IPOs intuitive.
+
+Provide useful empty states and clear feedback.
+
+### Contact and supporting pages
+
+Make forms responsive, readable, accessible, and easy to submit.
+
+### General mobile requirements
+
+- Minimum comfortable touch target around 44px.
+- No horizontal overflow.
+- No clipped content.
+- No tiny text.
+- No overlapping buttons.
+- No broken navigation.
+- No excessive fixed-height containers.
+- No hover-only interactions.
+- Support keyboard navigation.
+- Respect reduced-motion preferences.
+- Preserve light and dark themes.
+- Preserve English and Hindi support.
+
+Test the actual rendered application at every required viewport.
+
+---
+
+# 4. REMOVE THE SUBSCRIPTION FEATURE FOR NOW
+
+We are not launching subscriptions yet.
+
+Remove subscription and newsletter capture UI from the entire application.
+
+This includes:
+
+- Header Subscribe button.
+- Newsletter signup block.
+- Email capture fields.
+- Newsletter signup buttons.
+- Subscription-related calls to action.
+- Any subscription modal or promotional section.
+- Related dead links or placeholder interactions.
+
+Do not leave empty spaces where these components previously appeared.
+
+Rebalance the layout after removing them.
+
+Do not remove useful editorial content or the calendar simply because it previously shared a section with the newsletter.
+
+Keep the code reasonably modular so a subscription feature can be introduced later.
+
+---
+
+# 5. FIX GLOBAL SEARCH COMPLETELY
+
+The current search is not working correctly.
+
+For example, entering `ipos` returns:
+
+- All (0)
+- Articles (0)
+- IPOs (0)
+- Explainers (0)
+
+This is unacceptable because the application contains IPO-related content.
+
+Search must work across all actual published content.
+
+### Searchable content
+
+Search across:
+
+1. News articles.
+2. Article headlines.
+3. Article summaries.
+4. Article body text.
+5. Company names.
+6. IPO names.
+7. IPO descriptions.
+8. Explainers.
+9. Explainer titles.
+10. Categories.
+11. Tags.
+12. Keywords.
+13. Financial entities.
+14. Relevant abbreviations and aliases.
+
+### Search matching
+
+Implement:
+
+- Case-insensitive matching.
+- Whitespace normalization.
+- Punctuation-tolerant matching.
+- Partial word matching.
+- Token matching.
+- Singular/plural matching.
+- Relevant keyword aliases.
+- Company name matching.
+- Category matching.
+
+Examples:
+
+| Search query | Expected behavior |
+|---|---|
+| IPO | Find IPO-related content |
+| ipos | Find the same relevant IPO content |
+| Mahanadi | Find Mahanadi Coalfields content |
+| MCL | Find content tagged with MCL |
+| coal | Find relevant coal-related content |
+| Coal India | Find relevant company and news content |
+| market | Find market-related articles |
+| RBI | Find RBI-related articles |
+| primary market | Find relevant explainers |
+| GMP | Find GMP-related explainers |
+
+Do not create fake results merely to make search appear functional.
+
+### Search experience
+
+Add:
+
+- Search input with a clear placeholder.
+- Search icon.
+- Clear button.
+- Enter-key submission.
+- Search button.
+- Suggested keyword chips.
+- Popular search terms derived from actual content.
+- Search result counts.
+- Functional category filters.
+- Clear empty state.
+- Clear no-results state.
+- Useful related suggestions when nothing matches.
+
+Suggested keywords should be generated from real content tags, categories, and searchable entities.
+
+Clicking a suggested keyword must actually execute the search.
+
+Manual typing must work too.
+
+### Technical implementation
+
+Create a centralized search utility rather than duplicating search logic across components.
+
+Normalize both indexed content and queries consistently.
+
+Ensure that the result counts reflect the actual filtered results.
+
+Add automated tests specifically for:
+
+- `IPO`
+- `ipos`
+- `MCL`
+- `Mahanadi`
+- `coal`
+- `Coal India`
+- Partial matching.
+- Case-insensitive matching.
+- Category filters.
+- Empty queries.
+- No-results behavior.
+
+Do not consider search complete until the `ipos` problem is fixed and tested.
+
+---
+
+# 6. REMOVE ALL FICTIONAL FINANCIAL DATA
+
+This is a critical trust requirement.
+
+SakarBazaar is intended to become a real Indian financial news and IPO information platform.
+
+We cannot show fictional financial information as if it were real.
+
+Remove fictional sample records from all production-facing pages.
+
+This includes fictional IPO companies such as:
+
+- Sahyadri Agro Tools
+- Konkan Ferry Lines
+- Aravalli Precision
+- Vindhya Renewables
+- Mandovi Marine Logistics
+- Chambal Cables
+- Tapi Packaging
+- Beas Dairy Tech
+
+Also remove invented:
+
+- IPO issue sizes.
+- Price bands.
+- Opening and closing dates.
+- Listing dates.
+- Subscription figures.
+- QIB/NII/RII breakdowns.
+- Grey Market Premium figures.
+- Broker opinions.
+- Index values.
+- Stock prices.
+- Daily percentage movements.
+- FII/DII figures.
+- Calendar announcements.
+- Market news presented as live information.
+
+Search the entire application, not just the homepage.
+
+Remove fictional values from:
+
+- Homepage.
+- Markets.
+- IPO Desk.
+- IPO details.
+- Calendar.
+- Watchlist.
+- Search.
+- Tickers.
+- News.
+- Related stories.
+- Any other production-facing component.
+
+### Important: Do not replace fake data with new fake data.
+
+If a real data integration does not exist, show an honest empty state.
+
+For example:
+
+"Live market data is currently unavailable."
+
+"Official IPO information is awaiting verification."
+
+"Market data will appear here when a verified data source is connected."
+
+Do not display fabricated prices to make the page look populated.
+
+A separate development-only demo mode may exist if necessary, but it must be unmistakably labelled DEMO DATA and must never be confused with production information.
+
+---
+
+# 7. MARKET DATA: PREPARE REAL DATA INTEGRATION
+
+We want users to see commonly followed Indian indices and financial instruments.
+
+Start with:
+
+### Major indices
+
+- NIFTY 50
+- SENSEX
+- NIFTY BANK
+- NIFTY IT
+- INDIA VIX
+
+### Other market indicators
+
+- USD/INR
+- GOLD
+
+### Individual stocks
+
+Build the application so we can add commonly followed Indian listed companies and their exchange symbols.
+
+Do not invent stock prices, symbols, or company information.
+
+### Data requirements
+
+Every live market record must contain:
+
+- Instrument name.
+- Exchange or source.
+- Instrument symbol, when applicable.
+- Current price or index value.
+- Absolute change.
+- Percentage change.
+- Currency or unit.
+- Timestamp.
+- Source attribution.
+- Data freshness status.
+
+### Integration architecture
+
+First inspect whether an existing authorized market-data integration is already configured.
+
+If not:
+
+1. Build a clean market-data provider abstraction.
+2. Prepare the backend integration point.
+3. Use Firebase Cloud Functions or the appropriate secure server-side architecture.
+4. Store provider credentials in secure server-side secrets.
+5. Never expose API keys in frontend JavaScript.
+6. Add caching and refresh intervals.
+7. Add rate-limit protection.
+8. Handle stale data.
+9. Handle provider failures.
+10. Display the source and last-updated time.
+
+Do not scrape NSE or BSE websites.
+
+Do not bypass exchange licensing or redistribution restrictions.
+
+Do not silently select a paid market-data provider.
+
+If a paid provider or subscription is required, stop and explain the provider, cost, and configuration needed. Wait for my approval before incurring any cost.
+
+Until a legitimate data source is configured and tested, show the honest unavailable state.
+
+Do not label sample prices as live.
+
+---
+
+# 8. ADD THE MAHANADI COALFIELDS IPO NEWS
+
+I am providing the following editorial source material.
+
+Create a proper news article using the existing SakarBazaar article design.
+
+### Editorial headline
+
+**Mahanadi Coalfields IPO: ₹8,981 Crore Offer Scheduled for November 19–23, 2026**
+
+This is a suggested headline, not permission to treat the supplied IPO schedule as officially confirmed.
+
+### Supplied source material
+
+Mahanadi Coalfields Limited (MCL), a wholly owned subsidiary of Maharatna PSU Coal India Limited, is described in the supplied material as India's largest single coal producer, contributing 21% of domestic coal output in FY26 across 17 mines in Odisha's Talcher and Ib Valley coalfields.
+
+The supplied material states that the company's forthcoming IPO opens on November 19, 2026, and closes on November 23, 2026, at a price band of ₹129 to ₹136 per share.
+
+It describes an issue of up to ₹8,981.12 crore, with a valuation of ₹90,009.74 crore at the upper price band.
+
+The proposed issue is described as a 100% Offer for Sale of 66.18 crore equity shares, representing a 10% stake, by Coal India Limited. The supplied material states that Coal India Limited would receive the offer proceeds.
+
+### Financial information supplied
+
+| Metric | Supplied figure |
+|---|---:|
+| FY26 operating revenue | ₹30,549.59 crore |
+| FY26 EBITDA margin | 47.45% |
+| FY26 Profit After Tax | ₹10,698.12 crore |
+| FY26 Return on Net Worth | 53.87% |
+| Debt | ₹2.76 crore |
+| H1 FY27 revenue | ₹16,093.04 crore |
+| H1 FY27 PAT | ₹4,880.66 crore |
+| H1 FY27 revenue growth | 9.29% YoY |
+| H1 FY27 PAT growth | 6.71% YoY |
+
+### Key monitorables supplied
+
+- Rising receivables from state power utilities.
+- Pending NCWA-XII wage revisions.
+- Disputed tax and legal contingent liabilities.
+
+### Critical editorial verification requirements
+
+These are user-provided figures and claims, not independently verified facts.
+
+Before publishing this as verified financial news:
+
+1. Check the official IPO prospectus or applicable DRHP/RHP.
+2. Check official Coal India and MCL disclosures.
+3. Check NSE and BSE official filings where applicable.
+4. Confirm the IPO dates.
+5. Confirm the price band.
+6. Confirm the offer size and share count.
+7. Confirm the financial statements and relevant reporting periods.
+8. Confirm the OFS structure and selling shareholder.
+9. Confirm all claims about production and market share.
+
+Do not invent official URLs.
+
+Only link to documents when the actual official document URL has been supplied or verified.
+
+If official confirmation is unavailable, save the article as:
+
+**Awaiting Official Verification**
+
+Do not show it as a confirmed open IPO.
+
+Do not show an unverified date as a confirmed opening date.
+
+Do not display the issue as an active IPO until the official status has been established.
+
+### Article requirements
+
+Create:
+
+- Article headline.
+- Short description.
+- Category: IPO.
+- Company: Mahanadi Coalfields Limited.
+- Relevant keywords.
+- Financial entity extraction.
+- Article body.
+- Key takeaways.
+- Financial information table.
+- Risk and monitorables section.
+- Official source section.
+- Author/editor information.
+- Publication and update timestamps in IST.
+- Related articles, when available.
+- Bookmark and share controls.
+
+Keep the article neutral and factual.
+
+Do not make investment recommendations.
+
+Do not use language such as:
+
+- Buy now.
+- Guaranteed returns.
+- Must subscribe.
+- Multibagger.
+- Sure-shot listing gains.
+
+The article must clearly distinguish supplied claims from officially verified information.
+
+---
+
+# 9. ADD THE COMMERCE MINISTRY / INDIA–EGYPT NEWS
+
+Create a second news article from this supplied material.
+
+### Suggested headline
+
+**India and Egypt Explore Cooperation in EVs, Fintech and Renewable Energy**
+
+### Supplied source material
+
+Union Commerce and Industry Minister Shri Piyush Goyal met with Egypt's Infinity Energy to explore deeper bilateral collaboration in automotive manufacturing, electric vehicles, fintech, and renewable energy.
+
+During his high-level visit to Cairo alongside a major Indian business delegation, discussions focused on expanding cross-border investments, strengthening clean energy supply chains, and boosting industrial partnerships between India and Egypt.
+
+Both nations highlighted the growth potential for joint ventures in sustainable mobility and infrastructure development.
+
+### Editorial requirements
+
+Category: Economy / International Trade.
+
+Suggested keywords:
+
+- Piyush Goyal
+- Egypt
+- India–Egypt relations
+- Infinity Energy
+- Electric vehicles
+- EV manufacturing
+- Fintech
+- Renewable energy
+- International trade
+- Clean energy
+- Bilateral investment
+
+Verify the meeting, the date, the participants, and the reported discussion against official Ministry of Commerce or PIB communications before presenting the report as verified news.
+
+If verification is unavailable, retain it as an editorial draft marked:
+
+**Awaiting Official Verification**
+
+Do not invent a date, official statement, quotation, or source link.
+
+Use a neutral newsroom tone.
+
+---
+
+# 10. VIDEO INTEGRATION
+
+I have also uploaded a WhatsApp video:
+
+`WhatsApp Video 2026-11-17 at 11.35.07.mp4`
+
+I will upload the video into the Firebase Studio project as well.
+
+First check whether the uploaded asset is accessible to the project.
+
+Do not assume it is accessible just because I mentioned its filename.
+
+If accessible:
+
+1. Inspect its actual file type and metadata.
+2. Confirm its duration and dimensions.
+3. Confirm whether the current browser-supported format is suitable.
+4. Associate it with the appropriate news article only when its intended association is clear.
+5. If its association is unclear, leave an editorial media selector rather than guessing.
+6. Provide a responsive video player.
+7. Include play/pause, volume, seeking, and fullscreen controls.
+8. Do not autoplay.
+9. Provide a poster or fallback.
+10. Support captions or a transcript if supplied.
+11. Ensure it works on mobile.
+12. Avoid unnecessarily large page downloads.
+
+If Firebase Storage is configured, use an appropriate secure storage arrangement.
+
+Do not claim the video has been integrated until it has been tested in the browser.
+
+---
+
+# 11. REAL NEWS PUBLISHING WORKFLOW
+
+We need to move away from static showcase content toward a genuine publishing workflow.
+
+The long-term objective is a simple editorial system where I can provide source material and publish a news brief.
+
+### Editorial workflow
+
+Prepare a secure editor/admin architecture.
+
+The workflow should support:
+
+1. Paste source material.
+2. Enter the original source URL.
+3. Enter the source name.
+4. Choose a news category.
+5. Upload an image or video.
+6. Generate a short AI news brief.
+7. Extract financial entities.
+8. Generate relevant search keywords.
+9. Review the generated article.
+10. Mark verification status.
+11. Save as draft.
+12. Publish after editorial approval.
+
+### AI news brief requirements
+
+When generating a short brief:
+
+- Keep it under 100 words.
+- Use factual past tense wherever appropriate.
+- Use neutral newsroom language.
+- Do not add facts that are not present in the supplied source.
+- Preserve financial figures accurately.
+- Extract company names.
+- Extract relevant instruments and symbols when explicitly present.
+- Extract financial values.
+- Extract dates.
+- Extract regulators and exchanges.
+- Generate relevant search keywords.
+- Avoid investment advice.
+- Avoid exaggerated promotional language.
+
+The AI must not fabricate official sources, prices, dates, or figures.
+
+### Editorial verification states
+
+Support:
+
+- Draft.
+- Awaiting verification.
+- Verified.
+- Published.
+- Archived.
+
+Do not allow unverified financial claims to appear as verified information.
+
+### Security
+
+If an AI API is used:
+
+- Never expose API keys in the browser.
+- Use a secure backend or Firebase Cloud Function.
+- Store credentials in secure secrets.
+- Require authentication for editorial functions.
+- Restrict publishing to authorized administrators.
+- Add server-side validation.
+- Add an audit trail for publishing and updates.
+
+Do not create a fake admin login or a frontend-only security gate.
+
+If authentication and backend infrastructure are not yet configured, prepare the implementation architecture and clearly identify the remaining Firebase setup.
+
+Do not automatically publish AI-generated content.
+
+---
+
+# 12. FIREBASE AND CONTENT DATA MODEL
+
+Inspect the existing Firebase configuration first.
+
+Do not replace a working backend or create duplicate collections unnecessarily.
+
+If Firestore is already configured, extend the existing structure.
+
+Prepare a suitable content model supporting:
+
+### Articles
+
+- title
+- slug
+- summary
+- body
+- category
+- tags
+- keywords
+- entities
+- author
+- status
+- verificationStatus
+- sourceName
+- sourceUrl
+- officialSources
+- media
+- publishedAt
+- updatedAt
+- createdAt
+- language
+
+### IPO records
+
+- companyName
+- slug
+- segment
+- status
+- issueSize
+- priceBand
+- openingDate
+- closingDate
+- allotmentDate
+- listingDate
+- sellingShareholder
+- offerType
+- officialDocuments
+- sourceName
+- sourceUrl
+- verificationStatus
+- lastVerifiedAt
+
+Only populate fields supported by verified information.
+
+### Market instruments
+
+- name
+- symbol
+- exchange
+- instrumentType
+- currentValue
+- change
+- changePercent
+- currency
+- source
+- updatedAt
+- freshnessStatus
+
+Do not treat a missing value as zero.
+
+### Media
+
+- fileName
+- storagePath
+- mediaType
+- duration
+- width
+- height
+- poster
+- caption
+- transcript
+- associatedArticleId
+
+Prepare appropriate Firestore security rules.
+
+Public visitors may read published, approved content.
+
+Only authorized administrators may create, edit, verify, or publish editorial records.
+
+Do not make Firestore publicly writable.
+
+---
+
+# 13. NAVIGATION AND BACK-TO-HOMEPAGE EXPERIENCE
+
+Improve navigation throughout the site.
+
+Every detail page should provide:
+
+- A visible breadcrumb.
+- A clear link to its parent section.
+- A clear route back to the homepage.
+- Functional browser back behavior.
+- A sensible fallback if the user opened the page directly.
+
+Do not create links that point nowhere.
+
+Test all navigation paths.
+
+---
+
+# 14. DESIGN AND VISUAL IDENTITY
+
+Preserve the existing SakarBazaar visual identity.
+
+Current visual foundation:
+
+- Parchment background: `#FDFBF7`
+- Slate typography.
+- Teal accents.
+- Amber highlights.
+- Emerald positive indicators.
+- Rose negative indicators.
+- Newsreader editorial serif.
+- Hanken Grotesk interface typography.
+- Noto Sans Devanagari for Hindi.
+- Tabular financial figures.
+
+The website should feel like a serious financial newsroom.
+
+It should not look like a generic admin dashboard.
+
+Do not introduce unnecessary gradients, excessive shadows, random colors, or oversized decorative sections.
+
+Use visual hierarchy to make important financial information easy to understand.
+
+Keep the desktop experience polished while prioritizing mobile usability.
+
+---
+
+# 15. SEO, ACCESSIBILITY AND PERFORMANCE
+
+Preserve existing SEO work and improve it where necessary.
+
+Ensure:
+
+- Unique page titles.
+- Meta descriptions.
+- Canonical URLs where appropriate.
+- Article metadata.
+- Open Graph metadata.
+- Semantic headings.
+- Accessible images.
+- Proper link labels.
+- Keyboard navigation.
+- Accessible form validation.
+- Good color contrast.
+- Responsive images.
+- Lazy loading where appropriate.
+- No unnecessary autoplay.
+- No broken routes.
+- No console errors.
+
+Do not publish false structured financial data in SEO metadata.
+
+---
+
+# 16. TESTING AND ACCEPTANCE CRITERIA
+
+Do not finish merely because the application compiles.
+
+Run the complete test process.
+
+### A. Mobile usability
+
+Verify all major pages at:
+
+- 360px
+- 390px
+- 430px
+
+Also test tablet and desktop.
+
+Confirm:
+
+- No horizontal overflow.
+- No overlapping content.
+- No clipped text.
+- No inaccessible buttons.
+- No broken menus.
+- No unusable tables.
+- No awkward empty sections.
+- No unreadable article layouts.
+
+### B. Search
+
+Verify:
+
+- IPO finds IPO content.
+- IPOS finds IPO content.
+- MCL finds Mahanadi content.
+- Mahanadi finds Mahanadi content.
+- Coal India finds relevant content.
+- Search keywords work.
+- Manual typing works.
+- Enter submission works.
+- Category filters work.
+- Result counts are accurate.
+- Clear button works.
+- Empty states work.
+
+### C. Subscription removal
+
+Search the entire application and confirm that no subscription or newsletter signup UI remains.
+
+### D. Fictional data removal
+
+Search all production-facing files and confirm that the fictional IPOs and fabricated market values have been removed.
+
+Do not leave fake values in hidden cards, tickers, mobile components, or secondary routes.
+
+### E. News content
+
+Verify both supplied stories are correctly structured.
+
+Confirm that unverified claims remain marked as awaiting verification.
+
+Confirm the video is actually accessible and playable before reporting successful integration.
+
+### F. Functional behavior
+
+Test:
+
+- Homepage navigation.
+- Article opening.
+- Article bookmarking.
+- Watchlist persistence.
+- IPO navigation.
+- Search.
+- Explainer navigation.
+- Calendar.
+- English/Hindi toggle.
+- Light/dark mode.
+- Contact form.
+- Browser back button.
+
+### G. Technical checks
+
+Run:
+
+- TypeScript checks.
+- Existing unit tests.
+- New search tests.
+- Production build.
+- Browser testing.
+- Console error checks.
+- Network error checks.
+
+Take screenshots of the updated mobile and desktop experience.
+
+---
+
+# 17. IMPLEMENTATION ORDER
+
+Work in this order. Do not skip the audit.
+
+**Stage 1 — Audit and backup**
+- Inspect the complete project.
+- Inventory all fictional data.
+- Identify existing Firebase integrations.
+- Check uploaded assets.
+- Create a backup or Git checkpoint.
+
+**Stage 2 — Mobile-first redesign**
+- Improve responsive navigation.
+- Improve homepage.
+- Improve news and article layouts.
+- Improve IPO cards and tables.
+- Improve explainers and watchlist.
+- Improve supporting pages.
+
+**Stage 3 — Remove subscription UI**
+- Remove every subscription and newsletter capture component.
+- Rebalance layouts.
+
+**Stage 4 — Repair search**
+- Centralize search logic.
+- Add keyword indexing.
+- Add plural and alias matching.
+- Add keyword chips.
+- Add comprehensive tests.
+
+**Stage 5 — Remove fictional data**
+- Remove invented IPOs and financial values.
+- Add honest unavailable states.
+- Separate educational content from market data.
+
+**Stage 6 — Add the two supplied news stories**
+- Create the Mahanadi Coalfields editorial record.
+- Create the India–Egypt trade editorial record.
+- Preserve source attribution.
+- Apply verification states.
+- Add appropriate search keywords.
+
+**Stage 7 — Video and publishing architecture**
+- Inspect the uploaded video.
+- Integrate it only when accessible and correctly associated.
+- Prepare secure editorial publishing infrastructure.
+- Do not expose credentials.
+
+**Stage 8 — Market data readiness**
+- Audit existing providers.
+- Prepare a secure provider abstraction.
+- Do not connect a paid provider without approval.
+- Show honest unavailable states until verified data is available.
+
+**Stage 9 — Full verification**
+- Run all tests.
+- Inspect screenshots.
+- Fix regressions.
+- Provide a final implementation report.
+
+---
+
+# 18. FINAL REPORT REQUIRED
+
+When finished, provide a clear report containing:
+
+1. Files changed.
+2. Mobile improvements completed.
+3. Subscription components removed.
+4. Search improvements completed.
+5. Search test results.
+6. Fictional data removed.
+7. News stories added and their verification status.
+8. Video integration status.
+9. Firebase integration status.
+10. Market data integration status.
+11. Remaining API credentials or Firebase setup required.
+12. All routes tested.
+13. Mobile and desktop test results.
+14. TypeScript, unit test, and production build results.
+15. Any remaining blockers.
+
+Clearly distinguish:
+
+- Completed and tested.
+- Implemented but awaiting configuration.
+- Awaiting official verification.
+- Blocked by missing assets or credentials.
+
+## STRICT STOP CONDITIONS
+
+Do not:
+
+- Invent financial figures.
+- Invent IPO records.
+- Invent official URLs.
+- Pretend market data is live.
+- Publish unverified IPO information as confirmed.
+- Expose API credentials.
+- Add paid services without approval.
+- Automatically publish AI-generated news.
+- Delete working Phase 2 functionality.
+- Deploy publicly or make irreversible production changes without approval.
+
+**The goal is to turn SakarBazaar from a static-looking demonstration into a trustworthy, mobile-friendly financial newsroom with functional search, real editorial content, and a secure foundation for live data.**
+
+Prioritize accuracy, mobile usability, and user trust over making the application look artificially populated.
