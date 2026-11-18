@@ -84,7 +84,7 @@ export function CalendarPage() {
         <div>
           <h1>Public Issues &amp; Economic Calendar</h1>
           <p>
-            Official SEBI public issue filings (DRHP, RHP, Prospectuses) and verified macroeconomic dates.
+            Official SEBI public issue filings (DRHP, RHP, Prospectuses) and macroeconomic dates.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -452,10 +452,10 @@ export function CalendarPage() {
             ) : (
               <div style={{ padding: '20px 0', color: 'var(--muted)' }}>
                 <h2 style={{ font: '700 20px var(--serif)', margin: '0 0 6px', color: 'var(--ink)' }}>
-                  No verified calendar events currently scheduled
+                  No calendar events currently scheduled
                 </h2>
                 <p style={{ margin: '0 0 14px', maxWidth: '62ch' }}>
-                  Confirmed RBI MPC dates, MoSPI CPI/GDP release dates, and verified SEBI/NSE/BSE schedules appear here once officially published.
+                  Confirmed RBI MPC dates, MoSPI CPI/GDP release dates, and official SEBI/NSE/BSE schedules appear here once officially published.
                 </p>
               </div>
             )}

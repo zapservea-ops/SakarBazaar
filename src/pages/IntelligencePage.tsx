@@ -37,7 +37,7 @@ export function IntelligencePage() {
         <div className="sb-masthead-eyebrow">SakarBazaar</div>
         <h1>Intelligence Pulse</h1>
         <p className="sb-masthead-tagline">
-          Verified regulatory, macro &amp; corporate developments across Indian finance.
+          Regulatory, macro &amp; corporate developments across Indian finance.
         </p>
       </div>
 
@@ -60,12 +60,11 @@ export function IntelligencePage() {
         {filtered.length === 0 ? (
           <div className="card" style={{ padding: '32px', textAlign: 'center' }}>
             <p style={{ color: 'var(--muted)', margin: 0 }}>
-              No verified developments in this category.
+              No developments in this category.
             </p>
           </div>
         ) : (
           filtered.map((item) => {
-            const isVerified = item.verificationStatus === 'verified';
             const title = lang === 'hi' && item.titleHi ? item.titleHi : item.title;
             const summary = lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary;
             const catColor = categoryColors[item.category] ?? 'var(--teal)';
@@ -94,23 +93,6 @@ export function IntelligencePage() {
                   <span className="pill" style={{ background: catColor, color: '#fff', fontSize: '11px' }}>
                     {item.category}
                   </span>
-                  {isVerified ? (
-                    <span
-                      className="pill"
-                      style={{
-                        background: 'rgba(16,185,129,0.15)',
-                        color: '#10b981',
-                        border: '1px solid rgba(16,185,129,0.4)',
-                        fontSize: '11px',
-                      }}
-                    >
-                      ✓ Verified
-                    </span>
-                  ) : (
-                    <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                      ⏳ Awaiting Verification
-                    </span>
-                  )}
                   <span className="meta" style={{ marginLeft: 'auto', fontSize: '12px' }}>
                     {item.timestamp}
                   </span>
@@ -199,19 +181,6 @@ export function IntelligencePage() {
         </Link>
       </section>
 
-      {/* Companies teaser */}
-      <section className="card" style={{ marginTop: '16px', padding: '24px' }}>
-        <div className="sb-masthead-eyebrow" style={{ marginBottom: '8px' }}>
-          Corporate Intelligence
-        </div>
-        <h3 style={{ margin: '0 0 8px', fontFamily: 'Georgia, serif' }}>Companies</h3>
-        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '14px' }}>
-          Intelligence catalogue for India's most tracked listed companies.
-        </p>
-        <Link to="/companies" className="btn ghost">
-          Browse Companies →
-        </Link>
-      </section>
     </main>
   );
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
-import { CATEGORY_LABELS, IPO_STATUS_LABELS, VERIFICATION_STATUS_LABELS } from '../data/i18n';
+import { CATEGORY_LABELS, IPO_STATUS_LABELS } from '../data/i18n';
 import { EXPLAINERS_CATALOG, IPO_ALL_RECORDS } from '../data/sampleData';
 import {
   PREDEFINED_SEARCH_TERMS,
@@ -241,7 +241,7 @@ export function SearchPage() {
               {ui.popularSearchesLabel}
             </h2>
             <p style={{ margin: '0 0 14px', color: 'var(--muted)', fontSize: '14px' }}>
-              Explore verified editorial dispatches, primary market IPO dossiers, listed equity
+              Explore editorial dispatches, primary market IPO dossiers, listed equity
               profiles, and educational explainers:
             </p>
             <div className="sb-keyword-chips">
@@ -264,7 +264,7 @@ export function SearchPage() {
             {ui.noResultsTitle}
           </h2>
           <p style={{ margin: '0 0 14px', color: 'var(--muted)' }}>
-            No verified records matched <strong>"{queryInput}"</strong>. Try checking spelling,
+            No records matched <strong>"{queryInput}"</strong>. Try checking spelling,
             broadening terms, or choosing a suggestion below:
           </p>
           <div className="sb-keyword-chips">
@@ -316,22 +316,9 @@ export function SearchPage() {
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      {inst.instrumentType === 'equity' ? (
-                        <Link to={`/companies/${inst.symbol}`} className="btn ghost">
-                          Company Dossier →
-                        </Link>
-                      ) : (
-                        <Link to="/markets" className="btn ghost">
-                          Market Overview →
-                        </Link>
-                      )}
-                      <button
-                        type="button"
-                        className={isTracked ? 'btn ghost' : 'btn'}
-                        onClick={() => toggleWatchlist(inst.id)}
-                      >
-                        {isTracked ? 'Tracked' : '+ Watchlist'}
-                      </button>
+                      <Link to="/markets" className="btn ghost">
+                        Market Overview →
+                      </Link>
                     </div>
                   </div>
                 );
@@ -359,16 +346,6 @@ export function SearchPage() {
                       }}
                     >
                       <span className="cat">{CATEGORY_LABELS[lang][article.category]}</span>
-                      <span
-                        className={`pill ${
-                          article.verificationStatus === 'awaiting_verification'
-                            ? 'sb-pill-amber'
-                            : ''
-                        }`}
-                        style={{ fontSize: '11px' }}
-                      >
-                        {VERIFICATION_STATUS_LABELS[lang][article.verificationStatus]}
-                      </span>
                     </div>
                     <Link
                       to={`/article/${article.slug}`}
@@ -408,14 +385,11 @@ export function SearchPage() {
                       }}
                     >
                       <span className="cat">{ipo.segment}</span>
-                      <span
-                        className={`pill ${
-                          ipo.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                        }`}
-                        style={{ fontSize: '11px' }}
-                      >
-                        {IPO_STATUS_LABELS[lang][ipo.status]}
-                      </span>
+                      {ipo.status !== 'Awaiting Verification' && (
+                        <span className="pill" style={{ fontSize: '11px' }}>
+                          {IPO_STATUS_LABELS[lang][ipo.status]}
+                        </span>
+                      )}
                     </div>
                     <Link to={`/ipo/${ipo.slug}`} style={{ display: 'block', fontWeight: 600 }}>
                       {ipo.company}

@@ -12,7 +12,6 @@ export function Header() {
     copy,
     ui,
     bookmarks,
-    watchlistIds,
     searchTerm,
     mobileSearchOpen,
     desktopSearchRef,
@@ -32,8 +31,6 @@ export function Header() {
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
   const drawerCloseBtnRef = useRef<HTMLButtonElement | null>(null);
   const searchContainerRef = useRef<HTMLFormElement | null>(null);
-
-  const totalWatchlistCount = watchlistIds.size + bookmarks.size;
 
   const suggestions = useMemo(() => {
     if (!searchTerm.trim()) return [];
@@ -134,22 +131,11 @@ export function Header() {
           <NavLink to="/intelligence" aria-current={location.pathname === '/intelligence' ? 'page' : undefined}>
             {copy.intelligence}
           </NavLink>
-          <NavLink to="/companies" aria-current={location.pathname.startsWith('/companies') ? 'page' : undefined}>
-            {copy.companies}
-          </NavLink>
           <NavLink to="/ipo" aria-current={location.pathname.startsWith('/ipo') ? 'page' : undefined}>
             {copy.ipo}
           </NavLink>
           <NavLink to="/calendar" aria-current={location.pathname === '/calendar' ? 'page' : undefined}>
             {copy.calendar}
-          </NavLink>
-          <NavLink to="/watchlist" aria-current={location.pathname === '/watchlist' ? 'page' : undefined}>
-            <span>{copy.watch}</span>
-            {totalWatchlistCount > 0 && (
-              <span className="nav-badge" aria-label={`${totalWatchlistCount} tracked items`}>
-                {totalWatchlistCount}
-              </span>
-            )}
           </NavLink>
           <NavLink
             to="/explainers"
@@ -360,18 +346,11 @@ export function Header() {
               <NavLink to="/intelligence" aria-current={location.pathname === '/intelligence' ? 'page' : undefined}>
                 {copy.intelligence}
               </NavLink>
-              <NavLink to="/companies" aria-current={location.pathname.startsWith('/companies') ? 'page' : undefined}>
-                {copy.companies}
-              </NavLink>
               <NavLink to="/ipo" aria-current={location.pathname.startsWith('/ipo') ? 'page' : undefined}>
                 {copy.ipo}
               </NavLink>
               <NavLink to="/calendar" aria-current={location.pathname === '/calendar' ? 'page' : undefined}>
                 {copy.calendar}
-              </NavLink>
-              <NavLink to="/watchlist" aria-current={location.pathname === '/watchlist' ? 'page' : undefined}>
-                <span>{copy.watch}</span>
-                {totalWatchlistCount > 0 && <span className="nav-badge">{totalWatchlistCount}</span>}
               </NavLink>
               <NavLink
                 to="/explainers"

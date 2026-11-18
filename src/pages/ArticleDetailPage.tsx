@@ -4,7 +4,7 @@ import { ArticleVideoPlayer } from '../components/ArticleVideoPlayer';
 import { EditorialArt } from '../components/EditorialArt';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
-import { CATEGORY_LABELS, VERIFICATION_STATUS_LABELS } from '../data/i18n';
+import { CATEGORY_LABELS } from '../data/i18n';
 
 export function ArticleDetailPage() {
   const { slug } = useParams();
@@ -135,28 +135,12 @@ export function ArticleDetailPage() {
             >
               {CATEGORY_LABELS[lang][article.category]}
             </Link>
-            <span
-              className={`pill ${
-                article.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-              }`}
-            >
-              {VERIFICATION_STATUS_LABELS[lang][article.verificationStatus]}
-            </span>
             <span className="meta">{article.readTime}</span>
           </div>
 
           <h1>{displayHeadline}</h1>
 
           <p className="sb-article-lead">{displayDeck}</p>
-
-          {article.verificationStatus === 'awaiting_verification' && (
-            <div className="sb-sample-banner sb-verify-banner" role="note">
-              <span>
-                <strong>{ui.awaitingVerificationBadge}:</strong> {article.sourceNote}. Verify via
-                official regulator or exchange releases before relying on proposed dates or figures.
-              </span>
-            </div>
-          )}
 
           <div className="sb-article-byline">
             <div>
@@ -235,7 +219,6 @@ export function ArticleDetailPage() {
             <section className="card snap" style={{ marginTop: '24px' }} aria-labelledby="metrics-heading">
               <div className="sec-h">
                 <h2 id="metrics-heading">Supplied Offer &amp; Financial Snapshot</h2>
-                <span className="meta">{ui.awaitingVerificationBadge}</span>
               </div>
               {article.financialMetrics.map((row) => (
                 <div className="row sb-snap-row" key={row.metric}>

@@ -12,11 +12,11 @@ export function EditorialCalendarStrip({ calendarEvents }: EditorialCalendarStri
   return (
     <section className="news" id="calendar" aria-label="Verification standards and calendar watch">
       <div>
-        <h2>{lang === 'hi' ? 'संपादकीय सत्यापन मानक' : 'Editorial verification standards'}</h2>
+        <h2>{lang === 'hi' ? 'संपादकीय मानक' : 'Editorial standards'}</h2>
         <p>
           {lang === 'hi'
-            ? 'सकारबाज़ार में कोई भी काल्पनिक शेयर भाव, सब्सक्रिप्शन या GMP आँकड़ा प्रकाशित नहीं किया जाता। अपुष्ट प्रदत्त सामग्री स्पष्ट रूप से "आधिकारिक सत्यापन लंबित" चिह्नित रहती है।'
-            : 'SakarBazaar separates unverified source material from confirmed regulatory disclosures. Explore plain-language explainers on IPO prospectuses, ASBA allotment rules, and why unregulated GMP quotes are excluded.'}
+            ? 'सकारबाज़ार में कोई भी काल्पनिक शेयर भाव, सब्सक्रिप्शन या GMP आँकड़ा प्रकाशित नहीं किया जाता।'
+            : 'SakarBazaar provides clear, plain-language reporting on Indian finance. Explore plain-language explainers on IPO prospectuses, ASBA allotment rules, and exchange dynamics.'}
         </p>
         <div className="nf">
           <Link to="/explainers/ipo-basics" className="btn">
@@ -41,11 +41,11 @@ export function EditorialCalendarStrip({ calendarEvents }: EditorialCalendarStri
           ))
         ) : (
           <div style={{ borderColor: 'var(--teal)' }}>
-            <small>{lang === 'hi' ? 'सत्यापित कार्यक्रम' : 'Confirmed schedule'}</small>
+            <small>{lang === 'hi' ? 'कार्यक्रम' : 'Schedule'}</small>
             <span>
               {lang === 'hi'
-                ? 'वर्तमान में कोई सत्यापित कैलेंडर तिथि लोड नहीं है। अपुष्ट तिथियाँ आधिकारिक पुष्टि तक अलग रखी जाती हैं।'
-                : 'No verified regulatory or confirmed IPO schedule dates loaded yet. Unconfirmed dates are held out until official exchange confirmation.'}
+                ? 'वर्तमान में कोई आगामी कैलेंडर तिथि लोड नहीं है।'
+                : 'No upcoming regulatory or IPO schedule dates loaded yet.'}
             </span>
           </div>
         )}

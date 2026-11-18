@@ -13,18 +13,18 @@ export function IpoDeskSidebar({ records }: IpoDeskSidebarProps) {
   const counts = getVerifiedIpoCounts(records);
 
   return (
-    <section className="desk" aria-label="IPO desk verification status">
+    <section className="desk" aria-label="IPO desk">
       <span
         className="tag c"
         style={{ background: 'none', color: '#f0b429', padding: 0 }}
       >
-        IPO desk · verification status
+        IPO desk
       </span>
       <h3>
-        {counts.confirmedOpen} confirmed open · {counts.confirmedUpcoming} upcoming
+        {counts.confirmedOpen} open · {counts.confirmedUpcoming} upcoming
       </h3>
       <p style={{ margin: '0 0 12px', fontSize: '13px', color: '#b8c2cc' }}>
-        {counts.awaitingVerification} dossier awaiting official SEBI / exchange verification:
+        Tracked public market filings and offerings:
       </p>
 
       {records.map((item) => (
@@ -36,9 +36,7 @@ export function IpoDeskSidebar({ records }: IpoDeskSidebarProps) {
             </small>
           </span>
           <span className="tag c">
-            {item.verificationStatus === 'awaiting_verification'
-              ? 'AWAITING'
-              : IPO_STATUS_LABELS[lang][item.status]}
+            {IPO_STATUS_LABELS[lang][item.status]}
           </span>
         </Link>
       ))}

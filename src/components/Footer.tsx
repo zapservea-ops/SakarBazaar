@@ -13,7 +13,6 @@ export function Footer() {
           <Link to="/ipo">{copy.ipo}</Link>
           <Link to="/news">{copy.news}</Link>
           <Link to="/calendar">{copy.calendar}</Link>
-          <Link to="/watchlist">{copy.watch}</Link>
           <Link to="/explainers">{copy.explain}</Link>
           <Link to="/editorial">{copy.editorial}</Link>
         </div>

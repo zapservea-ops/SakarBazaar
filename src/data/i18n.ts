@@ -431,6 +431,7 @@ export const CATEGORY_LABELS: Record<LanguageCode, Record<NewsCategory, string>>
 export const IPO_STATUS_LABELS: Record<LanguageCode, Record<IpoStatus, string>> = {
   en: {
     'Awaiting Verification': 'Awaiting Official Verification',
+    'Proposed OFS': 'Proposed Offer for Sale',
     Open: 'Open',
     Upcoming: 'Upcoming',
     Closed: 'Recently closed',
@@ -438,6 +439,7 @@ export const IPO_STATUS_LABELS: Record<LanguageCode, Record<IpoStatus, string>> 
   },
   hi: {
     'Awaiting Verification': 'आधिकारिक सत्यापन लंबित',
+    'Proposed OFS': 'प्रस्तावित बिक्री प्रस्ताव',
     Open: 'खुला',
     Upcoming: 'आगामी',
     Closed: 'हाल में बंद',

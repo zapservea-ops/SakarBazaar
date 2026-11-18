@@ -114,21 +114,11 @@ export function MarketSnapshot({
       </div>
 
       {activeTab === 'pulse' ? (
-        <div className="sb-pulse-feed" role="feed" aria-label="Verified market developments">
+        <div className="sb-pulse-feed" role="feed" aria-label="Market developments">
           {MARKET_PULSE_ITEMS.map((item) => (
             <article key={item.id} className="sb-pulse-row">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
                 <span className="cat">{item.category}</span>
-                <span
-                  className={`pill ${
-                    item.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                  }`}
-                  style={{ fontSize: '10px' }}
-                >
-                  {item.verificationStatus === 'awaiting_verification'
-                    ? 'Awaiting Verification'
-                    : 'Verified Source'}
-                </span>
               </div>
               <h3 style={{ margin: '0 0 4px', fontSize: '14px', fontWeight: 600, lineHeight: 1.35 }}>
                 <Link to={item.relatedPath ?? '/markets'} style={{ color: 'var(--ink)' }}>
@@ -197,7 +187,7 @@ export function MarketSnapshot({
         </div>
         <p style={{ margin: '0 0 8px', fontSize: '13px', color: 'var(--muted)' }}>
           Institutional cash-market buy/sell figures require authorized exchange reporting.
-          SakarBazaar displays verified flows only without simulated bars.
+          SakarBazaar displays official exchange flows only without simulated bars.
         </p>
         <Link to="/explainers/fii-and-dii" style={{ color: 'var(--teal)', fontWeight: 600, fontSize: '13px' }}>
           How FII &amp; DII institutional flows work →

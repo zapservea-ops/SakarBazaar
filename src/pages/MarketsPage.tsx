@@ -135,7 +135,6 @@ export function MarketsPage() {
           <p style={{ margin: 0, fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
             Real-time NSE and BSE quotes remain decoupled until an authorized, licensed data feed is connected.
             SakarBazaar's primary focus is <strong>Financial Intelligence, Corporate Actions, and Regulatory Tracking</strong>.
-            Track individual issuers in the <Link to="/companies" style={{ color: 'var(--teal)', fontWeight: 600 }}>Companies Catalogue →</Link>
           </p>
         </div>
       </section>
@@ -343,7 +342,7 @@ export function MarketsPage() {
                     color: 'var(--muted)',
                   }}
                 >
-                  Verified regulatory, macro &amp; corporate developments. Sources: RBI, SEBI,
+                  Regulatory, macro &amp; corporate developments. Sources: RBI, SEBI,
                   MoSPI, NSE, BSE, PIB.
                 </p>
               </div>
@@ -351,7 +350,6 @@ export function MarketsPage() {
 
             <div className="sb-pulse-feed">
               {MARKET_PULSE_ITEMS.map((item) => {
-                const isVerified = item.verificationStatus === 'verified';
                 const title = lang === 'hi' && item.titleHi ? item.titleHi : item.title;
                 const summary =
                   lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary;
@@ -394,26 +392,6 @@ export function MarketsPage() {
                       >
                         {item.category}
                       </span>
-                      {isVerified ? (
-                        <span
-                          className="pill"
-                          style={{
-                            background: 'rgba(16,185,129,0.15)',
-                            color: '#10b981',
-                            border: '1px solid rgba(16,185,129,0.4)',
-                            fontSize: '11px',
-                          }}
-                        >
-                          ✓ Verified
-                        </span>
-                      ) : (
-                        <span
-                          className="pill sb-pill-amber"
-                          style={{ fontSize: '11px' }}
-                        >
-                          ⏳ Awaiting Verification
-                        </span>
-                      )}
                       <span className="meta" style={{ marginLeft: 'auto', fontSize: '12px' }}>
                         {item.timestamp}
                       </span>
@@ -556,19 +534,6 @@ export function MarketsPage() {
         </div>
 
         <aside>
-          <section className="card snap" style={{ marginBottom: '16px' }}>
-            <div className="sec-h">
-              <h2>COMPANIES DIRECTORY</h2>
-              <span className="pill sb-pill-teal">Catalogue</span>
-            </div>
-            <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '13px', lineHeight: '1.5' }}>
-              Explore detailed corporate disclosures and developments across India's premier listed entities.
-            </p>
-            <Link to="/companies" className="btn ghost" style={{ width: '100%', textAlign: 'center' }}>
-              Open Companies Catalogue →
-            </Link>
-          </section>
-
           <section className="card snap">
             <div className="sec-h">
               <h2>MARKET EXPLAINERS</h2>

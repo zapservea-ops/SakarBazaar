@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
-import { CATEGORY_LABELS, VERIFICATION_STATUS_LABELS } from '../data/i18n';
+import { CATEGORY_LABELS } from '../data/i18n';
 import type { HomepageNewsCategory, NewsItem } from '../types/sakarbazaar';
 
 interface LatestFeedProps {
@@ -69,16 +69,6 @@ export function LatestFeed({
                 <div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <span className="cat">{CATEGORY_LABELS[lang][item.category]}</span>
-                    {item.verificationStatus === 'awaiting_verification' && (
-                      <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                        {ui.awaitingVerificationBadge}
-                      </span>
-                    )}
-                    {item.verificationStatus === 'verified' && (
-                      <span className="pill" style={{ fontSize: '11px' }}>
-                        {VERIFICATION_STATUS_LABELS[lang].verified}
-                      </span>
-                    )}
                   </div>
                   <Link className="h" to={`/article/${item.slug}`}>
                     {displayHeadline}

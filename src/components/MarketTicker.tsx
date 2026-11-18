@@ -53,14 +53,6 @@ export function MarketTicker({
               <span className="sb-ticker-pulse-title">
                 {lang === 'hi' && pulse.titleHi ? pulse.titleHi : pulse.title}
               </span>
-              <span
-                className={`pill ${
-                  pulse.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                }`}
-                style={{ fontSize: '10px', padding: '1px 6px' }}
-              >
-                {pulse.verificationStatus === 'awaiting_verification' ? 'Unverified' : 'Verified'}
-              </span>
             </Link>
           ))}
 

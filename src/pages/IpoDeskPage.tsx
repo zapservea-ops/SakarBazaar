@@ -8,7 +8,7 @@ import type { IpoSegment, IpoStatus } from '../types/sakarbazaar';
 import { filterIpoRows, getVerifiedIpoCounts } from '../utils/marketFormat';
 
 const SEGMENTS: IpoSegment[] = ['Mainboard', 'SME'];
-const STATUS_FILTERS: ('All' | IpoStatus)[] = ['All', 'Awaiting Verification', 'Open', 'Upcoming', 'Closed'];
+const STATUS_FILTERS: ('All' | IpoStatus)[] = ['All', 'Proposed OFS', 'Open', 'Upcoming', 'Closed'];
 
 export function IpoDeskPage() {
   const { lang, ui, watchlistIds, toggleWatchlist } = useSakarBazaar();
@@ -23,14 +23,9 @@ export function IpoDeskPage() {
   const rows = filterIpoRows(IPO_ALL_RECORDS, segment, statusFilter);
 
   const summaryStats = [
-    { id: 'open', value: String(counts.confirmedOpen), label: 'Confirmed open issues' },
-    { id: 'upcoming', value: String(counts.confirmedUpcoming), label: 'Confirmed upcoming issues' },
-    {
-      id: 'awaiting',
-      value: String(counts.awaitingVerification),
-      label: 'Awaiting official verification',
-    },
-    { id: 'verified', value: String(counts.verifiedTotal), label: 'Verified exchange dossiers' },
+    { id: 'open', value: String(counts.confirmedOpen), label: 'Open issues' },
+    { id: 'upcoming', value: String(counts.confirmedUpcoming), label: 'Upcoming issues' },
+    { id: 'total', value: String(IPO_ALL_RECORDS.length), label: 'Total tracked issues' },
   ];
 
   return (
@@ -46,42 +41,6 @@ export function IpoDeskPage() {
           <h1>{ui.ipoPageTitle}</h1>
           <p>{ui.ipoPageSubtitle}</p>
         </div>
-        <span className="pill sb-pill-amber">{ui.awaitingVerificationBadge}</span>
-      </div>
-
-      <div className="sb-sample-banner">
-        <span>
-          <strong>Editorial verification rule:</strong> {ui.ipoVerificationNotice}
-        </span>
-        <span className="meta">
-          Verify prospectuses on{' '}
-          <a
-            href="https://www.sebi.gov.in"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: 'var(--teal)', fontWeight: 600 }}
-          >
-            SEBI
-          </a>
-          ,{' '}
-          <a
-            href="https://www.nseindia.com"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: 'var(--teal)', fontWeight: 600 }}
-          >
-            NSE
-          </a>{' '}
-          &amp;{' '}
-          <a
-            href="https://www.bseindia.com"
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: 'var(--teal)', fontWeight: 600 }}
-          >
-            BSE
-          </a>
-        </span>
       </div>
 
       <div className="sumgrid">
@@ -138,7 +97,6 @@ export function IpoDeskPage() {
             <thead>
               <tr>
                 <th>{ui.tableCompany}</th>
-                <th>{ui.tableVerification}</th>
                 <th>{ui.tableIssueSize}</th>
                 <th>{ui.tablePriceBand}</th>
                 <th>{ui.tableOpenClose}</th>
@@ -161,15 +119,6 @@ export function IpoDeskPage() {
                             ? `Selling shareholder: ${row.sellingShareholder}`
                             : row.segment}
                         </small>
-                      </td>
-                      <td>
-                        <span
-                          className={`pill ${
-                            row.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                          }`}
-                        >
-                          {IPO_STATUS_LABELS[lang][row.status]}
-                        </span>
                       </td>
                       <td className="num">{row.issueSize ?? 'Not disclosed'}</td>
                       <td className="num">{row.priceBand ?? 'Not disclosed'}</td>
@@ -209,7 +158,7 @@ export function IpoDeskPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
+                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
                     {ui.noResultsTitle}
                   </td>
                 </tr>
@@ -226,13 +175,6 @@ export function IpoDeskPage() {
                 <article className="card sb-ipo-card" key={row.id}>
                   <div className="sb-ipo-card-head">
                     <div>
-                      <span
-                        className={`pill ${
-                          row.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                        }`}
-                      >
-                        {IPO_STATUS_LABELS[lang][row.status]}
-                      </span>
                       <h3>
                         <Link to={`/ipo/${row.slug}`}>{row.company}</Link>
                       </h3>

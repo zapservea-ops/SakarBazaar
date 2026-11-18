@@ -17,7 +17,7 @@ export type HomepageNewsCategory = 'All' | 'Markets' | 'IPO' | 'Corporate' | 'Ec
 
 export type IpoSegment = 'Mainboard' | 'SME';
 
-export type IpoStatus = 'Awaiting Verification' | 'Open' | 'Upcoming' | 'Closed' | 'Listed';
+export type IpoStatus = 'Awaiting Verification' | 'Proposed OFS' | 'Open' | 'Upcoming' | 'Closed' | 'Listed';
 
 export type VerificationStatus = 'awaiting_verification' | 'verified' | 'unverified';
 
@@ -191,7 +191,7 @@ export interface IpoRow {
   slug: string;
   segment: IpoSegment;
   status: IpoStatus;
-  verificationStatus: 'awaiting_verification' | 'verified';
+  verificationStatus: 'awaiting_verification' | 'verified' | 'proposed';
   company: string;
   exchange?: string | null;
   issueSize: string | null;

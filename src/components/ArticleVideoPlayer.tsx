@@ -22,7 +22,7 @@ export function ArticleVideoPlayer({ media }: ArticleVideoPlayerProps) {
     <section className="card sb-video-card" aria-labelledby={`video-title-${media.id}`}>
       <div className="sb-video-head">
         <div>
-          <span className="pill sb-pill-teal">Video Report · Verified Footage</span>
+          <span className="pill sb-pill-teal">Video Report</span>
           <h2 id={`video-title-${media.id}`}>{media.title}</h2>
         </div>
         {media.durationSec ? (

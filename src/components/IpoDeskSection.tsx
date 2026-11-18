@@ -28,24 +28,19 @@ export function IpoDeskSection({
 
   const summaryCards = [
     {
-      id: 'confirmed-open',
+      id: 'open',
       value: String(counts.confirmedOpen),
-      label: lang === 'hi' ? 'सत्यापित खुले IPO' : 'Verified open issues',
+      label: lang === 'hi' ? 'खुले IPO' : 'Open issues',
     },
     {
-      id: 'confirmed-upcoming',
+      id: 'upcoming',
       value: String(counts.confirmedUpcoming),
-      label: lang === 'hi' ? 'सत्यापित आगामी IPO' : 'Verified upcoming issues',
+      label: lang === 'hi' ? 'आगामी IPO' : 'Upcoming issues',
     },
     {
-      id: 'awaiting-verify',
-      value: String(counts.awaitingVerification),
-      label: lang === 'hi' ? 'आधिकारिक सत्यापन लंबित' : 'Awaiting official verification',
-    },
-    {
-      id: 'verified-total',
-      value: String(counts.verifiedTotal),
-      label: lang === 'hi' ? 'सत्यापित डोजियर' : 'Verified exchange schedules',
+      id: 'total',
+      value: String(records.length),
+      label: lang === 'hi' ? 'कुल ट्रैक किए गए इश्यू' : 'Tracked issues',
     },
   ];
 
@@ -53,9 +48,6 @@ export function IpoDeskSection({
     <section id="ipo" className="card ipo">
       <div className="sec-h">
         <h2>{title}</h2>
-        <span className="meta">
-          {counts.awaitingVerification > 0 ? ui.awaitingVerificationBadge : ui.verifiedBadge}
-        </span>
       </div>
 
       <div className="sumgrid">
@@ -65,10 +57,6 @@ export function IpoDeskSection({
             <span>{stat.label}</span>
           </div>
         ))}
-      </div>
-
-      <div className="sb-note-box" style={{ marginTop: 0, marginBottom: '14px' }}>
-        {ui.ipoVerificationNotice}
       </div>
 
       <div className="tabs" id="itabs" role="tablist" aria-label="IPO segments">
@@ -91,7 +79,6 @@ export function IpoDeskSection({
           <thead>
             <tr>
               <th>{ui.tableCompany}</th>
-              <th>{ui.tableVerification}</th>
               <th>{ui.tableIssueSize}</th>
               <th>{ui.tablePriceBand}</th>
               <th>{ui.tableOpenClose}</th>
@@ -112,15 +99,6 @@ export function IpoDeskSection({
                       <small style={{ display: 'block', color: 'var(--muted)', fontSize: '12px' }}>
                         {row.sellingShareholder ? `Seller: ${row.sellingShareholder}` : row.segment}
                       </small>
-                    </td>
-                    <td>
-                      <span
-                        className={`pill ${
-                          row.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                        }`}
-                      >
-                        {IPO_STATUS_LABELS[lang][row.status]}
-                      </span>
                     </td>
                     <td className="num">{row.issueSize ?? 'Not disclosed'}</td>
                     <td className="num">{row.priceBand ?? 'Not disclosed'}</td>
@@ -160,8 +138,8 @@ export function IpoDeskSection({
               })
             ) : (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
-                  No verified or submitted {segment} IPO dossiers currently loaded.
+                <td colSpan={6} style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
+                  No {segment} IPO dossiers currently loaded.
                 </td>
               </tr>
             )}
@@ -178,13 +156,6 @@ export function IpoDeskSection({
               <article className="card sb-ipo-card" key={row.id}>
                 <div className="sb-ipo-card-head">
                   <div>
-                    <span
-                      className={`pill ${
-                        row.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                      }`}
-                    >
-                      {IPO_STATUS_LABELS[lang][row.status]}
-                    </span>
                     <h3>
                       <Link to={`/ipo/${row.slug}`}>{row.company}</Link>
                     </h3>
@@ -247,7 +218,7 @@ export function IpoDeskSection({
           })
         ) : (
           <p style={{ margin: 0, color: 'var(--muted)' }}>
-            No verified or submitted {segment} IPO dossiers currently loaded.
+            No {segment} IPO dossiers currently loaded.
           </p>
         )}
       </div>

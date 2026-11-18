@@ -5,7 +5,6 @@ import { SakarBazaarProvider } from './context/SakarBazaarContext';
 import { ArticleDetailPage } from './pages/ArticleDetailPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { ChangeLedgerPage } from './pages/ChangeLedgerPage';
-import { CompaniesPage } from './pages/CompaniesPage';
 import { EditorialDeskPage } from './pages/EditorialDeskPage';
 import { ExplainerDetailPage } from './pages/ExplainerDetailPage';
 import { ExplainersPage } from './pages/ExplainersPage';
@@ -17,7 +16,6 @@ import { MarketsPage } from './pages/MarketsPage';
 import { NewsListPage } from './pages/NewsListPage';
 import { SearchPage } from './pages/SearchPage';
 import { SupportingPage } from './pages/SupportingPage';
-import { WatchlistPage } from './pages/WatchlistPage';
 
 export default function App() {
   return (
@@ -28,8 +26,6 @@ export default function App() {
             <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/intelligence" element={<IntelligencePage />} />
-              <Route path="/companies" element={<CompaniesPage />} />
-              <Route path="/companies/:symbol" element={<CompaniesPage />} />
               <Route path="/change-ledger" element={<ChangeLedgerPage />} />
               <Route path="/markets" element={<MarketsPage />} />
               <Route path="/ipo" element={<IpoDeskPage />} />
@@ -38,7 +34,6 @@ export default function App() {
               <Route path="/news/:category" element={<NewsListPage />} />
               <Route path="/article/:slug" element={<ArticleDetailPage />} />
               <Route path="/calendar" element={<CalendarPage />} />
-              <Route path="/watchlist" element={<WatchlistPage />} />
               <Route path="/explainers" element={<ExplainersPage />} />
               <Route path="/explainers/:slug" element={<ExplainerDetailPage />} />
               <Route path="/search" element={<SearchPage />} />

@@ -402,32 +402,7 @@ export function getSearchSuggestions(
   const scoredList: { item: SearchSuggestionItem; score: number }[] = [];
   const seen = new Set<string>();
 
-  // 1. Companies & Market Instruments (High priority for ticker/name search)
-  for (const inst of instruments) {
-    const symScore = calculateMatchScore(inst.symbol, norm);
-    const nameScore = calculateMatchScore(inst.instrumentName, norm);
-    const maxScore = Math.max(symScore, nameScore);
-
-    if (maxScore > 0) {
-      const key = `comp-${inst.symbol.toLowerCase()}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        scoredList.push({
-          score: maxScore + 5, // slight boost for company/instrument
-          item: {
-            id: `inst-${inst.id}`,
-            text: `${inst.symbol} — ${inst.instrumentName}`,
-            category: 'Companies',
-            type: 'market',
-            path: `/companies/${inst.symbol.toUpperCase()}`,
-            subtitle: `${inst.exchange} · ${inst.instrumentType.toUpperCase()}`,
-          },
-        });
-      }
-    }
-  }
-
-  // 2. Articles & Dispatches (News)
+  // 1. Articles & Dispatches (News)
   for (const a of articles) {
     const headScore = calculateMatchScore(a.headline, norm);
     const compScore = a.company ? calculateMatchScore(a.company, norm) : 0;

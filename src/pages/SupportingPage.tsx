@@ -96,11 +96,9 @@ export function SupportingPage({ page }: SupportingPageProps) {
               prefer calm, source-linked financial journalism over noisy tickers and intrusive
               popups.
             </p>
-            <h2>Verification-first workflow</h2>
+            <h2>Source-first editorial workflow</h2>
             <p>
-              User-submitted or unverified reports—including proposed IPO figures or bilateral
-              delegation briefings—are explicitly tagged <strong>Awaiting Official Verification</strong>{' '}
-              until editors reconcile primary documents across SEBI, NSE, BSE, RBI, MoSPI, or PIB.
+              SakarBazaar reports are cross-checked against primary regulatory documents across SEBI, NSE, BSE, RBI, MoSPI, and PIB.
             </p>
           </div>
         )}

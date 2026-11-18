@@ -139,11 +139,6 @@ export function NewsListPage() {
                   <div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                       <span className="cat">{CATEGORY_LABELS[lang][article.category]}</span>
-                      {article.verificationStatus === 'awaiting_verification' && (
-                        <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                          {ui.awaitingVerificationBadge}
-                        </span>
-                      )}
                       <span className="meta">
                         {article.publishedAt} · {article.readTime}
                       </span>

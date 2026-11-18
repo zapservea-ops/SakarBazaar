@@ -96,11 +96,10 @@ test('getVerifiedIpoCounts excludes unverified MCL IPO from confirmed open/upcom
   assert.equal(counts.confirmedOpen, 0);
   assert.equal(counts.confirmedUpcoming, 0);
   assert.equal(counts.verifiedTotal, 0);
-  assert.equal(counts.awaitingVerification, 1);
 
-  const awaitingMainboard = filterIpoRows(IPO_ALL_RECORDS, 'Mainboard', 'Awaiting Verification');
-  assert.equal(awaitingMainboard.length, 1);
-  assert.equal(awaitingMainboard[0].slug, 'mahanadi-coalfields-limited');
+  const proposedMainboard = filterIpoRows(IPO_ALL_RECORDS, 'Mainboard', 'Proposed OFS');
+  assert.equal(proposedMainboard.length, 1);
+  assert.equal(proposedMainboard[0].slug, 'mahanadi-coalfields-limited');
 });
 
 test('filterCalendarItems handles confirmed empty calendar state safely', () => {

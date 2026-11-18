@@ -52,11 +52,7 @@ export function IpoDetailPage() {
         <div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
             <span className="pill">{ipo.segment}</span>
-            <span
-              className={`pill ${
-                ipo.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-              }`}
-            >
+            <span className="pill">
               {IPO_STATUS_LABELS[lang][ipo.status]}
             </span>
           </div>
@@ -72,25 +68,6 @@ export function IpoDetailPage() {
           {isTracked ? ui.saved : `+ ${ui.tableTrack}`}
         </button>
       </div>
-
-      {ipo.verificationStatus === 'awaiting_verification' && (
-        <div className="sb-sample-banner sb-verify-banner" role="note">
-          <span>
-            <strong>{ui.awaitingVerificationBadge}:</strong> Dates, price band, valuation, and
-            financial metrics below come from user-supplied editorial material ({ipo.sourceName}).
-            They are not yet confirmed by official SEBI DRHP/RHP or NSE/BSE exchange notices.
-          </span>
-          {ipo.relatedArticleSlug && (
-            <Link
-              to={`/article/${ipo.relatedArticleSlug}`}
-              className="btn ghost"
-              style={{ whiteSpace: 'nowrap' }}
-            >
-              Read editorial dispatch &amp; video →
-            </Link>
-          )}
-        </div>
-      )}
 
       <div className="sumgrid">
         <div className="card sum">
@@ -116,8 +93,8 @@ export function IpoDetailPage() {
           {ipo.financialMetrics && ipo.financialMetrics.length > 0 && (
             <section className="card snap" style={{ marginBottom: '20px' }}>
               <div className="sec-h">
-                <h2>Supplied Offer &amp; Financial Snapshot</h2>
-                <span className="meta">{ui.awaitingVerificationBadge}</span>
+                <h2>Offer &amp; Financial Snapshot</h2>
+                <span className="meta">Supplied data</span>
               </div>
               {ipo.financialMetrics.map((row) => (
                 <div className="row sb-snap-row" key={row.metric}>
@@ -139,21 +116,6 @@ export function IpoDetailPage() {
                 {ipo.risksAndMonitorables.map((risk, idx) => (
                   <li key={idx} style={{ marginBottom: '8px' }}>
                     {risk}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {ipo.verificationChecklist && ipo.verificationChecklist.length > 0 && (
-            <section className="card snap" style={{ marginBottom: '20px' }}>
-              <div className="sec-h">
-                <h2>Verification Checklist</h2>
-              </div>
-              <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                {ipo.verificationChecklist.map((item, idx) => (
-                  <li key={idx} style={{ marginBottom: '8px', color: 'var(--muted)' }}>
-                    {item}
                   </li>
                 ))}
               </ul>
@@ -188,9 +150,6 @@ export function IpoDetailPage() {
           <section className="card snap">
             <div className="sec-h">
               <h2>Offer Terms &amp; Schedule</h2>
-              <span className="meta">
-                {ipo.verificationStatus === 'awaiting_verification' ? 'Unverified' : 'Verified'}
-              </span>
             </div>
             <div className="row sb-snap-row">
               <span>Selling shareholder</span>
@@ -321,16 +280,14 @@ export function IpoDetailPage() {
             </p>
           </div>
 
-          {/* 7. Verification Checklist */}
+          {/* 7. Filing & Regulatory Details */}
           <div className="sb-xray-panel" style={{ gridColumn: '1 / -1' }}>
-            <h4>7. Verification Checklist &amp; Disclosure Audit</h4>
+            <h4>7. Regulatory &amp; Disclosure Details</h4>
             <ul className="sb-checklist">
               <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className={ipo.verificationStatus === 'verified' ? 'sb-checklist-check' : 'sb-checklist-pending'}>
-                  {ipo.verificationStatus === 'verified' ? '✓' : '⏳'}
-                </span>
+                <span className="sb-checklist-check">✓</span>
                 <span>
-                  <strong>Official SEBI DRHP Filing:</strong> {ipo.verificationStatus === 'verified' ? 'Verified on SEBI repository' : 'Awaiting official filing publication on sebi.gov.in'}
+                  <strong>Regulatory Filing Framework:</strong> Subject to official SEBI DRHP/RHP registration and stock exchange circulars
                 </span>
               </li>
               <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>

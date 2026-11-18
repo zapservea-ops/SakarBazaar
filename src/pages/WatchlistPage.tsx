@@ -101,11 +101,7 @@ export function WatchlistPage() {
                   <div className="sb-watchlist-item" key={ipo.id}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '4px' }}>
-                        <span
-                          className={`pill ${
-                            ipo.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-                          }`}
-                        >
+                        <span className="pill">
                           {IPO_STATUS_LABELS[lang][ipo.status]}
                         </span>
                         <span className="meta">{ipo.segment}</span>

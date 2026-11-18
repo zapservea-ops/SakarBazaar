@@ -81,7 +81,7 @@ export function HomePage() {
               <h2 style={{ margin: 0, fontSize: '20px' }}>
                 PRIMARY <span style={{ color: 'var(--teal)' }}>DISPATCHES</span>
               </h2>
-              <span className="meta">Verified editorial coverage &amp; corporate developments</span>
+              <span className="meta">Editorial coverage &amp; corporate developments</span>
             </div>
             <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
               All News ({articlesCatalog.length}) →
@@ -101,15 +101,6 @@ export function HomePage() {
                 <div style={{ marginTop: '14px' }}>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
                     <span className="cat">{CATEGORY_LABELS[lang][leadArticle.category]}</span>
-                    {leadArticle.verificationStatus === 'awaiting_verification' ? (
-                      <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                        ⏳ Awaiting Verification
-                      </span>
-                    ) : (
-                      <span className="pill sb-pill-teal" style={{ fontSize: '11px' }}>
-                        ✓ Verified
-                      </span>
-                    )}
                     {leadArticle.media && (
                       <span className="pill" style={{ background: '#0b6b6b', color: '#fff', fontSize: '11px' }}>
                         ▶ Video Brief
@@ -145,15 +136,6 @@ export function HomePage() {
                 <div style={{ marginTop: '12px' }}>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
                     <span className="cat">{CATEGORY_LABELS[lang][secondArticle.category]}</span>
-                    {secondArticle.verificationStatus === 'awaiting_verification' ? (
-                      <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                        ⏳ Awaiting Verification
-                      </span>
-                    ) : (
-                      <span className="pill sb-pill-teal" style={{ fontSize: '11px' }}>
-                        ✓ Verified
-                      </span>
-                    )}
                     <span className="meta">{secondArticle.time}</span>
                   </div>
                   <h3 style={{ fontSize: '17px', lineHeight: '1.35', margin: '0 0 8px' }}>
@@ -184,9 +166,6 @@ export function HomePage() {
                 <div style={{ marginTop: '12px' }}>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
                     <span className="cat">{CATEGORY_LABELS[lang][thirdArticle.category]}</span>
-                    <span className="pill sb-pill-teal" style={{ fontSize: '11px' }}>
-                      ✓ Official BSE Filing
-                    </span>
                     {thirdArticle.media && (
                       <span className="pill" style={{ background: '#0b6b6b', color: '#fff', fontSize: '11px' }}>
                         ▶ Includes Video
@@ -222,7 +201,7 @@ export function HomePage() {
                     THE MOST <span style={{ color: 'var(--teal)' }}>MATERIAL DEVELOPMENTS</span>
                   </h2>
                   <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
-                    Verified dispatches that alter capital allocations, valuations, or regulatory compliance.
+                    Material dispatches that alter capital allocations, valuations, or regulatory compliance.
                   </p>
                 </div>
                 <Link
@@ -236,7 +215,6 @@ export function HomePage() {
 
               <div className="sb-pulse-feed">
                 {MARKET_PULSE_ITEMS.slice(0, 5).map((item) => {
-                  const isVerified = item.verificationStatus === 'verified';
                   const title = lang === 'hi' && item.titleHi ? item.titleHi : item.title;
                   const summary = lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary;
                   const catColor = categoryColors[item.category] ?? 'var(--teal)';
@@ -268,23 +246,6 @@ export function HomePage() {
                         >
                           {item.category}
                         </span>
-                        {isVerified ? (
-                          <span
-                            className="pill"
-                            style={{
-                              background: 'rgba(16,185,129,0.15)',
-                              color: '#10b981',
-                              border: '1px solid rgba(16,185,129,0.4)',
-                              fontSize: '11px',
-                            }}
-                          >
-                            ✓ Verified
-                          </span>
-                        ) : (
-                          <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                            ⏳ Awaiting Official Verification
-                          </span>
-                        )}
                         <span className="meta" style={{ marginLeft: 'auto', fontSize: '12px' }}>
                           {item.timestamp}
                         </span>
@@ -493,10 +454,7 @@ export function HomePage() {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
                       <strong style={{ fontSize: '13px' }}>{rec.company}</strong>
-                      <span
-                        className={`pill ${rec.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''}`}
-                        style={{ fontSize: '10px' }}
-                      >
+                      <span className="pill" style={{ fontSize: '10px' }}>
                         {IPO_STATUS_LABELS[lang][rec.status]}
                       </span>
                     </div>
@@ -509,26 +467,6 @@ export function HomePage() {
               <Link to="/ipo" className="btn ghost" style={{ width: '100%', marginTop: '12px', textAlign: 'center' }}>
                 Open IPO Dossiers →
               </Link>
-            </section>
-
-            {/* Companies Catalogue Teaser */}
-            <section className="card snap" style={{ marginBottom: '20px' }}>
-              <div className="sec-h">
-                <h2>COMPANIES</h2>
-                <Link to="/companies" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
-                  Catalogue →
-                </Link>
-              </div>
-              <p style={{ margin: '0 0 12px', fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
-                Searchable corporate intelligence for India's benchmark corporate issuers with official disclosures.
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ITC', 'COALINDIA'].map((sym) => (
-                  <Link key={sym} to={`/companies/${sym}`} className="pill sb-pill-muted" style={{ textDecoration: 'none' }}>
-                    {sym}
-                  </Link>
-                ))}
-              </div>
             </section>
 
             {/* Editorial Standard */}

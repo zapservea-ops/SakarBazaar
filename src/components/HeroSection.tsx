@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
-import { CATEGORY_LABELS, VERIFICATION_STATUS_LABELS } from '../data/i18n';
+import { CATEGORY_LABELS } from '../data/i18n';
 import type { ArticleRecord } from '../types/sakarbazaar';
 import { EditorialArt } from './EditorialArt';
 
@@ -51,13 +51,6 @@ export function HeroSection({ leadArticle, secondaryArticle }: HeroSectionProps)
         <div className="body">
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="pill">{CATEGORY_LABELS[lang][leadArticle.category]}</span>
-            <span
-              className={`pill ${
-                leadArticle.verificationStatus === 'awaiting_verification' ? 'sb-pill-amber' : ''
-              }`}
-            >
-              {VERIFICATION_STATUS_LABELS[lang][leadArticle.verificationStatus]}
-            </span>
             <span className="meta" id="heroTime">
               {leadArticle.publishedAt} · {leadArticle.readTime}
             </span>
@@ -90,8 +83,7 @@ export function HeroSection({ leadArticle, secondaryArticle }: HeroSectionProps)
               <i style={{ height: '86%' }} />
             </div>
             <span className="meta">
-              {CATEGORY_LABELS[lang][secondaryArticle.category]} ·{' '}
-              {VERIFICATION_STATUS_LABELS[lang][secondaryArticle.verificationStatus]}
+              {CATEGORY_LABELS[lang][secondaryArticle.category]}
             </span>
             <h3>{secondaryHeadline}</h3>
           </Link>
@@ -104,7 +96,7 @@ export function HeroSection({ leadArticle, secondaryArticle }: HeroSectionProps)
             <i style={{ height: '80%' }} />
             <i style={{ height: '92%' }} />
           </div>
-          <span className="meta">IPO Dossier · Awaiting Verification</span>
+          <span className="meta">IPO Dossier</span>
           <h3>
             {lang === 'hi'
               ? 'महानदी कोलफील्ड्स (MCL): प्रस्तावित ₹8,981.12 Cr OFS विवरण'

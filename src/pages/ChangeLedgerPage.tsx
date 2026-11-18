@@ -44,7 +44,7 @@ export function ChangeLedgerPage() {
       >
         The Change Ledger records material document and policy changes across Indian finance.
         Full before/after document comparison is pending official source integration. The entries
-        below represent verified and developing change events.
+        below represent significant and developing change events.
       </div>
 
       <div className="sb-ledger-timeline">
@@ -52,7 +52,6 @@ export function ChangeLedgerPage() {
           const title = lang === 'hi' && item.titleHi ? item.titleHi : item.title;
           const summary = lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary;
           const catColor = categoryColors[item.category] ?? 'var(--teal)';
-          const isVerified = item.verificationStatus === 'verified';
 
           return (
             <div key={item.id} className="sb-ledger-entry">
@@ -70,23 +69,6 @@ export function ChangeLedgerPage() {
                 <span className="pill" style={{ background: catColor, color: '#fff', fontSize: '11px' }}>
                   {item.category}
                 </span>
-                {isVerified ? (
-                  <span
-                    className="pill"
-                    style={{
-                      background: 'rgba(16,185,129,0.15)',
-                      color: '#10b981',
-                      border: '1px solid rgba(16,185,129,0.4)',
-                      fontSize: '11px',
-                    }}
-                  >
-                    ✓ Confirmed
-                  </span>
-                ) : (
-                  <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
-                    ⏳ Developing
-                  </span>
-                )}
                 <span className="meta" style={{ marginLeft: 'auto', fontSize: '12px' }}>
                   {item.timestamp}
                 </span>
