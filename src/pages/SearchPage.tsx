@@ -316,9 +316,15 @@ export function SearchPage() {
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <Link to="/markets" className="btn ghost">
-                        Market Desk →
-                      </Link>
+                      {inst.instrumentType === 'equity' ? (
+                        <Link to={`/companies/${inst.symbol}`} className="btn ghost">
+                          Company Dossier →
+                        </Link>
+                      ) : (
+                        <Link to="/markets" className="btn ghost">
+                          Market Overview →
+                        </Link>
+                      )}
                       <button
                         type="button"
                         className={isTracked ? 'btn ghost' : 'btn'}

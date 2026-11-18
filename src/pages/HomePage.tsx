@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { EditorialArt } from '../components/EditorialArt';
 import { EditorialCalendarStrip } from '../components/EditorialCalendarStrip';
-import { HeroSection } from '../components/HeroSection';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS, IPO_STATUS_LABELS } from '../data/i18n';
 import {
@@ -40,83 +40,189 @@ export function HomePage() {
     document.title = 'SakarBazaar – India Financial Intelligence';
   }, []);
 
-  const leadArticle = articlesCatalog.find((a) => a.isFeatured) ?? articlesCatalog[0];
-  const secondaryArticle = articlesCatalog.find((a) => a.id !== leadArticle?.id);
-  const filteredNews = filterNewsItems(newsItems, selectedCategory, searchTerm);
+  // Top 3 featured articles
+  const topThreeArticles = articlesCatalog.slice(0, 3);
+  const leadArticle = topThreeArticles[0];
+  const secondArticle = topThreeArticles[1];
+  const thirdArticle = topThreeArticles[2];
 
-  // Derive real counts - strictly from verified records
-  const materialCount = MARKET_PULSE_ITEMS.length;
-  const ipoMilestoneCount = IPO_ALL_RECORDS.length;
-  const regulatoryCount = MARKET_PULSE_ITEMS.filter(
-    (i) => i.category === 'Regulatory' || i.category === 'RBI',
-  ).length;
-  const documentChangesCount = 0; // Honest state: pending automated doc comparison engine
+  const filteredNews = filterNewsItems(newsItems, selectedCategory, searchTerm);
 
   return (
     <>
-      {/* ── INTELLIGENCE MASTHEAD ────────────────────────────────────── */}
+      {/* ── EDITORIAL NEWSPAPER MASTHEAD ────────────────────────────── */}
       <section className="sb-masthead">
         <div className="wrap">
-          <div className="sb-masthead-eyebrow">India Financial Intelligence</div>
-          <h1>SakarBazaar</h1>
-          <p className="sb-masthead-tagline">
-            "From financial news to financial understanding."
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <div className="sb-masthead-eyebrow">India Financial Intelligence</div>
+              <h1>SakarBazaar</h1>
+              <p className="sb-masthead-tagline">
+                "From financial news to financial understanding."
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <Link to="/news" className="btn ghost" style={{ fontSize: '13px' }}>
+                Latest News →
+              </Link>
+              <Link to="/intelligence" className="btn" style={{ fontSize: '13px' }}>
+                Intelligence Pulse →
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
 
       <main id="top" className="wrap">
-        {/* ── 4 COMPACT INTELLIGENCE INDICATORS ───────────────────────── */}
-        <section aria-label="Intelligence Pulse Indicators">
-          <div className="sb-pulse-indicators">
-            <Link to="/intelligence" className="sb-pulse-indicator-card" style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div className="sb-pi-num">{materialCount}</div>
-              <div className="sb-pi-label">Material Developments</div>
-              <div className="sb-pi-sub">Verified regulatory &amp; corporate dispatches</div>
+        {/* ── PROMINENT TOP THREE FINANCIAL STORIES ───────────────────── */}
+        <section aria-label="Lead Financial Stories" style={{ marginBottom: '32px' }}>
+          <div className="sec-h" style={{ marginBottom: '16px' }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '20px' }}>
+                PRIMARY <span style={{ color: 'var(--teal)' }}>DISPATCHES</span>
+              </h2>
+              <span className="meta">Verified editorial coverage &amp; corporate developments</span>
+            </div>
+            <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
+              All News ({articlesCatalog.length}) →
             </Link>
+          </div>
 
-            <Link to="/ipo" className="sb-pulse-indicator-card" style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div className="sb-pi-num">{ipoMilestoneCount}</div>
-              <div className="sb-pi-label">IPO Milestones</div>
-              <div className="sb-pi-sub">Active &amp; proposed exchange dossiers</div>
-            </Link>
+          <div className="sb-three-stories-grid">
+            {/* Story 1: Lead Article */}
+            {leadArticle && (
+              <article className="card sb-story-featured">
+                <Link to={`/article/${leadArticle.slug}`} aria-label={leadArticle.headline}>
+                  <EditorialArt
+                    variant={leadArticle.illustration}
+                    label={leadArticle.illustrationCaption}
+                  />
+                </Link>
+                <div style={{ marginTop: '14px' }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <span className="cat">{CATEGORY_LABELS[lang][leadArticle.category]}</span>
+                    {leadArticle.verificationStatus === 'awaiting_verification' ? (
+                      <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
+                        ⏳ Awaiting Verification
+                      </span>
+                    ) : (
+                      <span className="pill sb-pill-teal" style={{ fontSize: '11px' }}>
+                        ✓ Verified
+                      </span>
+                    )}
+                    {leadArticle.media && (
+                      <span className="pill" style={{ background: '#0b6b6b', color: '#fff', fontSize: '11px' }}>
+                        ▶ Video Brief
+                      </span>
+                    )}
+                    <span className="meta">{leadArticle.time} · {leadArticle.readTime}</span>
+                  </div>
+                  <h3 style={{ fontSize: '20px', lineHeight: '1.3', margin: '0 0 10px' }}>
+                    <Link to={`/article/${leadArticle.slug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                      {lang === 'hi' && leadArticle.headlineHi ? leadArticle.headlineHi : leadArticle.headline}
+                    </Link>
+                  </h3>
+                  <p style={{ margin: '0 0 12px', fontSize: '14px', lineHeight: '1.55', color: 'var(--muted)' }}>
+                    {lang === 'hi' && leadArticle.deckHi ? leadArticle.deckHi : leadArticle.deck}
+                  </p>
+                  <div className="src" style={{ fontSize: '12px' }}>
+                    <b>{leadArticle.ticker}</b> · {leadArticle.author}
+                  </div>
+                </div>
+              </article>
+            )}
 
-            <Link to="/intelligence" className="sb-pulse-indicator-card" style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div className="sb-pi-num">{regulatoryCount}</div>
-              <div className="sb-pi-label">Regulatory Updates</div>
-              <div className="sb-pi-sub">RBI, SEBI &amp; Ministry notifications</div>
-            </Link>
+            {/* Story 2: Second Article */}
+            {secondArticle && (
+              <article className="card sb-story-secondary">
+                <Link to={`/article/${secondArticle.slug}`} aria-label={secondArticle.headline}>
+                  <EditorialArt
+                    variant={secondArticle.illustration}
+                    label={secondArticle.illustrationCaption}
+                    compact
+                  />
+                </Link>
+                <div style={{ marginTop: '12px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    <span className="cat">{CATEGORY_LABELS[lang][secondArticle.category]}</span>
+                    {secondArticle.verificationStatus === 'awaiting_verification' ? (
+                      <span className="pill sb-pill-amber" style={{ fontSize: '11px' }}>
+                        ⏳ Awaiting Verification
+                      </span>
+                    ) : (
+                      <span className="pill sb-pill-teal" style={{ fontSize: '11px' }}>
+                        ✓ Verified
+                      </span>
+                    )}
+                    <span className="meta">{secondArticle.time}</span>
+                  </div>
+                  <h3 style={{ fontSize: '17px', lineHeight: '1.35', margin: '0 0 8px' }}>
+                    <Link to={`/article/${secondArticle.slug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                      {lang === 'hi' && secondArticle.headlineHi ? secondArticle.headlineHi : secondArticle.headline}
+                    </Link>
+                  </h3>
+                  <p style={{ margin: '0 0 10px', fontSize: '13px', lineHeight: '1.5', color: 'var(--muted)' }}>
+                    {lang === 'hi' && secondArticle.deckHi ? secondArticle.deckHi : secondArticle.deck}
+                  </p>
+                  <div className="src" style={{ fontSize: '12px' }}>
+                    <b>{secondArticle.ticker}</b> · {secondArticle.author}
+                  </div>
+                </div>
+              </article>
+            )}
 
-            <Link to="/change-ledger" className="sb-pulse-indicator-card" style={{ textDecoration: 'none', color: 'inherit' }}>
-              <div className="sb-pi-num" style={{ color: 'var(--muted)' }}>
-                {documentChangesCount > 0 ? documentChangesCount : '0'}
-              </div>
-              <div className="sb-pi-label">Document Changes</div>
-              <div className="sb-pi-sub">Awaiting automated filings feed</div>
-            </Link>
+            {/* Story 3: NHC Foods (New Article with Video) */}
+            {thirdArticle && (
+              <article className="card sb-story-secondary">
+                <Link to={`/article/${thirdArticle.slug}`} aria-label={thirdArticle.headline}>
+                  <EditorialArt
+                    variant={thirdArticle.illustration}
+                    label={thirdArticle.illustrationCaption}
+                    compact
+                  />
+                </Link>
+                <div style={{ marginTop: '12px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    <span className="cat">{CATEGORY_LABELS[lang][thirdArticle.category]}</span>
+                    <span className="pill sb-pill-teal" style={{ fontSize: '11px' }}>
+                      ✓ Official BSE Filing
+                    </span>
+                    {thirdArticle.media && (
+                      <span className="pill" style={{ background: '#0b6b6b', color: '#fff', fontSize: '11px' }}>
+                        ▶ Includes Video
+                      </span>
+                    )}
+                    <span className="meta">{thirdArticle.time}</span>
+                  </div>
+                  <h3 style={{ fontSize: '17px', lineHeight: '1.35', margin: '0 0 8px' }}>
+                    <Link to={`/article/${thirdArticle.slug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                      {lang === 'hi' && thirdArticle.headlineHi ? thirdArticle.headlineHi : thirdArticle.headline}
+                    </Link>
+                  </h3>
+                  <p style={{ margin: '0 0 10px', fontSize: '13px', lineHeight: '1.5', color: 'var(--muted)' }}>
+                    {lang === 'hi' && thirdArticle.deckHi ? thirdArticle.deckHi : thirdArticle.deck}
+                  </p>
+                  <div className="src" style={{ fontSize: '12px' }}>
+                    <b>{thirdArticle.ticker}</b> · {thirdArticle.author}
+                  </div>
+                </div>
+              </article>
+            )}
           </div>
         </section>
 
         {/* ── TWO COLUMN EDITORIAL & INTELLIGENCE LAYOUT ──────────────── */}
         <div className="layout">
           <div>
-            {/* Lead Analysis */}
-            {leadArticle && (
-              <HeroSection
-                leadArticle={leadArticle}
-                secondaryArticle={secondaryArticle}
-              />
-            )}
-
             {/* ── THE MOST MATERIAL DEVELOPMENTS FEED ────────────────────── */}
-            <section className="card" style={{ marginTop: '24px' }}>
+            <section className="card" style={{ marginTop: 0 }}>
               <div className="sec-h" style={{ marginBottom: '16px' }}>
                 <div>
                   <h2 style={{ margin: 0 }}>
                     THE MOST <span style={{ color: 'var(--teal)' }}>MATERIAL DEVELOPMENTS</span>
                   </h2>
                   <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
-                    Verified dispatches that alter capital allocations, valuations, or compliance.
+                    Verified dispatches that alter capital allocations, valuations, or regulatory compliance.
                   </p>
                 </div>
                 <Link
@@ -124,12 +230,12 @@ export function HomePage() {
                   className="meta"
                   style={{ color: 'var(--teal)', fontWeight: 600, whiteSpace: 'nowrap' }}
                 >
-                  Full Pulse →
+                  Full Intelligence Pulse ({MARKET_PULSE_ITEMS.length}) →
                 </Link>
               </div>
 
               <div className="sb-pulse-feed">
-                {MARKET_PULSE_ITEMS.slice(0, 4).map((item) => {
+                {MARKET_PULSE_ITEMS.slice(0, 5).map((item) => {
                   const isVerified = item.verificationStatus === 'verified';
                   const title = lang === 'hi' && item.titleHi ? item.titleHi : item.title;
                   const summary = lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary;
@@ -261,13 +367,13 @@ export function HomePage() {
               </div>
             </section>
 
-            {/* ── LATEST DISPATCHES & EDITORIAL ──────────────────────────── */}
+            {/* ── ALL NEWSROOM DISPATCHES ─────────────────────────────────── */}
             <section className="card feed" style={{ marginTop: '24px' }}>
               <div className="sec-h">
                 <div>
                   <h2>{copy.latest}</h2>
                   <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
-                    In-depth reporting across Indian markets, corporations and policy.
+                    Continuous reporting across Indian markets, corporations and policy.
                   </p>
                 </div>
                 <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
@@ -346,7 +452,7 @@ export function HomePage() {
             </section>
           </div>
 
-          {/* ── ASIDE INTELLIGENCE MODULES ─────────────────────────────── */}
+          {/* ── ASIDE MODULES ──────────────────────────────────────────── */}
           <aside>
             {/* The Change Ledger Teaser */}
             <section className="card snap" style={{ marginBottom: '20px' }}>
@@ -414,10 +520,10 @@ export function HomePage() {
                 </Link>
               </div>
               <p style={{ margin: '0 0 12px', fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
-                Searchable intelligence for India's 15 benchmark corporate issuers without fabricated prices.
+                Searchable corporate intelligence for India's benchmark corporate issuers with official disclosures.
               </p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'COALINDIA'].map((sym) => (
+                {['RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ITC', 'COALINDIA'].map((sym) => (
                   <Link key={sym} to={`/companies/${sym}`} className="pill sb-pill-muted" style={{ textDecoration: 'none' }}>
                     {sym}
                   </Link>
@@ -428,7 +534,7 @@ export function HomePage() {
             {/* Editorial Standard */}
             <section className="card snap">
               <div className="sec-h">
-                <h2>EDITORIAL ETHICS</h2>
+                <h2>EDITORIAL POLICY</h2>
               </div>
               <p style={{ margin: 0, fontSize: '12px', color: 'var(--muted)', lineHeight: '1.6' }}>
                 SakarBazaar strictly separates confirmed regulatory/exchange filings from unverified claims. We never fabricate stock prices, indices or subscription levels.

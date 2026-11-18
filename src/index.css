@@ -2227,3 +2227,33 @@ footer button.footer-link:hover {
     grid-template-columns: 1fr;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   THREE EDITORIAL STORIES GRID (NEWSPAPER STYLE)
+   ══════════════════════════════════════════════════════════════ */
+
+.sb-three-stories-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+}
+
+.sb-story-featured,
+.sb-story-secondary {
+  display: flex;
+  flex-direction: column;
+  justifyContent: space-between;
+  height: 100%;
+}
+
+.sb-story-featured:hover,
+.sb-story-secondary:hover {
+  border-color: var(--teal);
+}
+
+@media (max-width: 900px) {
+  .sb-three-stories-grid {
+    grid-template-columns: 1fr;
+  }
+}

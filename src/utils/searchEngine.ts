@@ -30,6 +30,8 @@ export const PREDEFINED_SEARCH_TERMS: string[] = [
   'ICICI Bank',
   'TCS',
   'Infosys',
+  'NHC Foods',
+  'Sachmaas Foods',
   'FII',
   'DII',
   'USD INR',
@@ -60,6 +62,8 @@ const SEARCH_ALIASES: Record<string, string[]> = {
   evs: ['ev', 'electric vehicle', 'electric vehicles'],
   egypt: ['cairo', 'india egypt', 'infinity energy', 'piyush goyal'],
   fintech: ['financial technology', 'digital payments', 'upi'],
+  nhc: ['nhc foods', 'nhc foods limited', '517554', 'sachmaas', 'agro commodities'],
+  nhcfoods: ['nhc foods', 'nhc foods limited', '517554', 'sachmaas foods'],
   renewable: ['renewables', 'clean energy', 'renewable energy', 'solar', 'wind'],
   market: ['markets', 'nifty', 'sensex', 'nse', 'bse', 'secondary market'],
   markets: ['market', 'nifty', 'sensex', 'nse', 'bse'],
@@ -360,6 +364,30 @@ export function searchSiteContent(
   };
 }
 
+function calculateMatchScore(text: string, queryNorm: string): number {
+  const norm = normalizeSearchText(text);
+  if (!norm || !queryNorm) return 0;
+  if (norm === queryNorm) return 100; // Exact match
+
+  const words = norm.split(/\s+/);
+
+  // If query is a single character, ONLY accept exact word starts (e.g. "f" -> "FII", "Fintech")
+  if (queryNorm.length === 1) {
+    if (words.some((w) => w.startsWith(queryNorm))) {
+      return 80;
+    }
+    return 0; // Reject middle-of-word single character occurrences
+  }
+
+  // Multi-character queries
+  if (words.some((w) => w === queryNorm)) return 95; // Exact word match
+  if (words.some((w) => w.startsWith(queryNorm))) return 80; // Word prefix match
+  if (norm.startsWith(queryNorm)) return 85; // String prefix match
+  if (queryNorm.length >= 3 && norm.includes(queryNorm)) return 40; // Substring match
+
+  return 0;
+}
+
 export function getSearchSuggestions(
   query: string,
   articles: ArticleRecord[],
@@ -371,110 +399,133 @@ export function getSearchSuggestions(
   const norm = normalizeSearchText(query);
   if (!norm || norm.length < 1) return [];
 
-  const suggestions: SearchSuggestionItem[] = [];
+  const scoredList: { item: SearchSuggestionItem; score: number }[] = [];
   const seen = new Set<string>();
 
-  // 1. Check predefined keywords
-  for (const term of PREDEFINED_SEARCH_TERMS) {
-    if (normalizeSearchText(term).includes(norm)) {
-      const key = term.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        suggestions.push({
-          id: `term-${term}`,
-          text: term,
-          category: 'Topic',
-          type: 'keyword',
-          path: `/search?q=${encodeURIComponent(term)}`,
-        });
-      }
-    }
-  }
-
-  // 2. Check market instruments (symbols and company names)
+  // 1. Companies & Market Instruments (High priority for ticker/name search)
   for (const inst of instruments) {
-    const symNorm = normalizeSearchText(inst.symbol);
-    const nameNorm = normalizeSearchText(inst.instrumentName);
-    if (symNorm.includes(norm) || nameNorm.includes(norm)) {
-      const key = inst.symbol.toLowerCase();
+    const symScore = calculateMatchScore(inst.symbol, norm);
+    const nameScore = calculateMatchScore(inst.instrumentName, norm);
+    const maxScore = Math.max(symScore, nameScore);
+
+    if (maxScore > 0) {
+      const key = `comp-${inst.symbol.toLowerCase()}`;
       if (!seen.has(key)) {
         seen.add(key);
-        suggestions.push({
-          id: `inst-${inst.id}`,
-          text: `${inst.symbol} · ${inst.instrumentName}`,
-          category: inst.instrumentType === 'index' ? 'Index' : 'Stock',
-          type: 'market',
-          path: `/search?q=${encodeURIComponent(inst.symbol)}`,
-          subtitle: `${inst.exchange} · ${inst.instrumentType.toUpperCase()}`,
+        scoredList.push({
+          score: maxScore + 5, // slight boost for company/instrument
+          item: {
+            id: `inst-${inst.id}`,
+            text: `${inst.symbol} — ${inst.instrumentName}`,
+            category: 'Companies',
+            type: 'market',
+            path: `/companies/${inst.symbol.toUpperCase()}`,
+            subtitle: `${inst.exchange} · ${inst.instrumentType.toUpperCase()}`,
+          },
         });
       }
     }
   }
 
-  // 3. Check IPOs
-  for (const ipo of ipos) {
-    if (
-      normalizeSearchText(ipo.company).includes(norm) ||
-      normalizeSearchText(ipo.summary).includes(norm)
-    ) {
-      const key = ipo.company.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        suggestions.push({
-          id: `ipo-${ipo.id}`,
-          text: ipo.company,
-          category: 'IPO Dossier',
-          type: 'ipo',
-          path: `/ipo/${ipo.slug}`,
-          subtitle: `${ipo.segment} · ${ipo.status}`,
-        });
-      }
-    }
-  }
-
-  // 4. Check articles
+  // 2. Articles & Dispatches (News)
   for (const a of articles) {
-    if (
-      normalizeSearchText(a.headline).includes(norm) ||
-      (a.company && normalizeSearchText(a.company).includes(norm))
-    ) {
-      const key = a.headline.toLowerCase();
+    const headScore = calculateMatchScore(a.headline, norm);
+    const compScore = a.company ? calculateMatchScore(a.company, norm) : 0;
+    const tickScore = calculateMatchScore(a.ticker, norm);
+    const maxScore = Math.max(headScore, compScore, tickScore);
+
+    if (maxScore > 0) {
+      const key = `art-${a.slug}`;
       if (!seen.has(key)) {
         seen.add(key);
-        suggestions.push({
-          id: `art-${a.id}`,
-          text: a.headline,
-          category: a.category,
-          type: 'article',
-          path: `/article/${a.slug}`,
-          subtitle: a.authorRole,
+        scoredList.push({
+          score: maxScore,
+          item: {
+            id: `art-${a.id}`,
+            text: a.headline,
+            category: 'News',
+            type: 'article',
+            path: `/article/${a.slug}`,
+            subtitle: `${a.category} · ${a.time}`,
+          },
         });
       }
     }
   }
 
-  // 5. Check explainers
+  // 3. IPO Dossiers
+  for (const ipo of ipos) {
+    const compScore = calculateMatchScore(ipo.company, norm);
+    if (compScore > 0) {
+      const key = `ipo-${ipo.slug}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        scoredList.push({
+          score: compScore,
+          item: {
+            id: `ipo-${ipo.id}`,
+            text: ipo.company,
+            category: 'IPOs',
+            type: 'ipo',
+            path: `/ipo/${ipo.slug}`,
+            subtitle: `${ipo.segment} · ${ipo.status}`,
+          },
+        });
+      }
+    }
+  }
+
+  // 4. Topics & Keywords (Predefined search terms)
+  for (const term of PREDEFINED_SEARCH_TERMS) {
+    const termScore = calculateMatchScore(term, norm);
+    if (termScore > 0) {
+      const key = `term-${term.toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        scoredList.push({
+          score: termScore - 5, // keywords rank slightly below direct company/news items
+          item: {
+            id: `term-${term}`,
+            text: term,
+            category: 'Topics',
+            type: 'keyword',
+            path: `/search?q=${encodeURIComponent(term)}`,
+            subtitle: 'Topic Guide',
+          },
+        });
+      }
+    }
+  }
+
+  // 5. Explainers
   for (const exp of explainers) {
-    if (
-      normalizeSearchText(exp.title).includes(norm) ||
-      normalizeSearchText(exp.tag).includes(norm)
-    ) {
-      const key = exp.title.toLowerCase();
+    const titleScore = calculateMatchScore(exp.title, norm);
+    const tagScore = calculateMatchScore(exp.tag, norm);
+    const maxScore = Math.max(titleScore, tagScore);
+
+    if (maxScore > 0) {
+      const key = `exp-${exp.slug}`;
       if (!seen.has(key)) {
         seen.add(key);
-        suggestions.push({
-          id: `exp-${exp.id}`,
-          text: exp.title,
-          category: 'Guide',
-          type: 'explainer',
-          path: `/explainers/${exp.slug}`,
-          subtitle: exp.tag,
+        scoredList.push({
+          score: maxScore - 5,
+          item: {
+            id: `exp-${exp.id}`,
+            text: exp.title,
+            category: 'Topics',
+            type: 'explainer',
+            path: `/explainers/${exp.slug}`,
+            subtitle: exp.tag,
+          },
         });
       }
     }
   }
 
-  return suggestions.slice(0, limit);
+  // Sort by score descending
+  scoredList.sort((a, b) => b.score - a.score);
+
+  return scoredList.map((entry) => entry.item).slice(0, limit);
 }
 
 export function filterNewsItemsBySearch(

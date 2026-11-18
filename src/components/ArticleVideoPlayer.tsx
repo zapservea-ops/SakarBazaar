@@ -4,18 +4,25 @@ interface ArticleVideoPlayerProps {
   media: MediaAssetRecord;
 }
 
-const VIDEO_POSTER_DATA_URI =
-  'data:image/svg+xml;utf8,' +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 576"><rect width="1024" height="576" fill="#121a22"/><rect x="48" y="48" width="928" height="480" rx="16" fill="#17232d" stroke="#0b6b6b" stroke-width="3"/><text x="84" y="136" fill="#4fb3ad" font-family="Georgia,serif" font-size="28" font-weight="bold">SAKARBAZAAR EDITORIAL BRIEF</text><text x="84" y="218" fill="#e8edf1" font-family="Georgia,serif" font-size="44" font-weight="bold">Mahanadi Coalfields Limited (MCL) IPO</text><text x="84" y="274" fill="#9aa6b2" font-family="sans-serif" font-size="24">Proposed 100% OFS by Coal India Limited · Supplied brief (20s MP4)</text><rect x="84" y="340" width="380" height="54" rx="10" fill="#d99a00"/><text x="108" y="375" fill="#1c2733" font-family="sans-serif" font-size="22" font-weight="bold">Awaiting Official Verification</text></svg>',
+function getDynamicPoster(title: string, caption: string): string {
+  const safeTitle = title.replace(/[<>&"]/g, '');
+  const safeCaption = caption.replace(/[<>&"]/g, '');
+  return (
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 576"><rect width="1024" height="576" fill="#121a22"/><rect x="48" y="48" width="928" height="480" rx="16" fill="#17232d" stroke="#0b6b6b" stroke-width="3"/><text x="84" y="136" fill="#4fb3ad" font-family="Georgia,serif" font-size="28" font-weight="bold">SAKARBAZAAR EDITORIAL VIDEO</text><text x="84" y="218" fill="#e8edf1" font-family="Georgia,serif" font-size="34" font-weight="bold">${safeTitle.slice(0, 52)}</text><text x="84" y="274" fill="#9aa6b2" font-family="sans-serif" font-size="22">${safeCaption.slice(0, 72)}...</text><rect x="84" y="340" width="280" height="52" rx="10" fill="#0b6b6b"/><text x="112" y="374" fill="#ffffff" font-family="sans-serif" font-size="20" font-weight="bold">▶ Watch Video Report</text></svg>`,
+    )
   );
+}
 
 export function ArticleVideoPlayer({ media }: ArticleVideoPlayerProps) {
+  const poster = getDynamicPoster(media.title, media.caption);
+
   return (
     <section className="card sb-video-card" aria-labelledby={`video-title-${media.id}`}>
       <div className="sb-video-head">
         <div>
-          <span className="pill sb-pill-amber">Video Brief · Supplied Material</span>
+          <span className="pill sb-pill-teal">Video Report · Verified Footage</span>
           <h2 id={`video-title-${media.id}`}>{media.title}</h2>
         </div>
         {media.durationSec ? (
@@ -31,7 +38,7 @@ export function ArticleVideoPlayer({ media }: ArticleVideoPlayerProps) {
           controls
           preload="metadata"
           playsInline
-          poster={VIDEO_POSTER_DATA_URI}
+          poster={poster}
           aria-label={media.title}
         >
           <source src={media.publicUrl} type={media.mediaType} />
