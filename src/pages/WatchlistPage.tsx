@@ -4,12 +4,6 @@ import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS, IPO_STATUS_LABELS } from '../data/i18n';
 import { IPO_ALL_RECORDS } from '../data/sampleData';
-import {
-  formatIndianNumber,
-  getArrowSymbol,
-  getChangeClass,
-  getSignPrefix,
-} from '../utils/marketFormat';
 
 export function WatchlistPage() {
   const {
@@ -18,7 +12,6 @@ export function WatchlistPage() {
     bookmarks,
     watchlistIds,
     articlesCatalog,
-    allMarketInstruments,
     toggleBookmark,
     toggleWatchlist,
   } = useSakarBazaar();
@@ -30,12 +23,6 @@ export function WatchlistPage() {
   const savedArticles = articlesCatalog.filter((a) => bookmarks.has(a.headline));
   const trackedIpos = IPO_ALL_RECORDS.filter((ipo) => watchlistIds.has(ipo.id));
   const untrackedIpos = IPO_ALL_RECORDS.filter((ipo) => !watchlistIds.has(ipo.id));
-  const trackedInstruments = allMarketInstruments.filter((inst) =>
-    watchlistIds.has(inst.id),
-  );
-  const untrackedInstruments = allMarketInstruments.filter(
-    (inst) => !watchlistIds.has(inst.id),
-  );
 
   return (
     <main id="top" className="wrap sb-page">
@@ -169,77 +156,43 @@ export function WatchlistPage() {
         <aside>
           <section className="card snap">
             <div className="sec-h">
-              <h2>
-                {ui.trackedIndicesHeading} ({trackedInstruments.length})
-              </h2>
-              <span className="meta">NSE / BSE / MCX</span>
+              <h2>Market Resources</h2>
             </div>
-
-            {trackedInstruments.length > 0 ? (
-              <div>
-                {trackedInstruments.map((inst) => {
-                  const hasPrice = inst.latestPrice !== null;
-                  const hasChange = hasPrice && inst.absoluteChange !== null;
-                  const chg = inst.absoluteChange ?? 0;
-                  const pct = inst.percentChange;
-                  return (
-                    <div className="sb-watchlist-item" key={inst.id}>
-                      <div>
-                        <strong>{inst.instrumentName}</strong>
-                        <small style={{ display: 'block', color: 'var(--muted)' }}>
-                          {inst.exchange} ·{' '}
-                          {hasPrice
-                            ? `${inst.prefix ?? ''}${formatIndianNumber(inst.latestPrice as number)}`
-                            : 'Unavailable'}
-                          {' · '}
-                          {inst.source}
-                        </small>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        {hasChange && (
-                          <span className={`num ${getChangeClass(chg)}`}>
-                            {getArrowSymbol(chg)} {getSignPrefix(chg)}
-                            {formatIndianNumber(chg)}
-                            {pct !== null ? ` (${getSignPrefix(pct)}${formatIndianNumber(pct)}%)` : ''}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          className="btn ghost"
-                          onClick={() => toggleWatchlist(inst.id)}
-                        >
-                          {ui.removeLabel}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '14px' }}>
-                {ui.emptyTrackedIndices}
-              </p>
-            )}
-
-            {untrackedInstruments.length > 0 && (
-              <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--line)' }}>
-                <div className="meta" style={{ marginBottom: '8px' }}>
-                  {ui.addIndicesHeading}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {untrackedInstruments.map((inst) => (
-                    <button
-                      key={inst.id}
-                      type="button"
-                      className="btn ghost"
-                      onClick={() => toggleWatchlist(inst.id)}
-                    >
-                      + {inst.symbol}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <p style={{ margin: '0 0 14px', fontSize: '13px', color: 'var(--muted)', lineHeight: '1.5' }}>
+              Access official Indian market and exchange resources. Live market data is not currently available on SakarBazaar.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <a
+                href="https://www.nseindia.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="btn ghost"
+                style={{ justifyContent: 'space-between', display: 'flex', alignItems: 'center' }}
+              >
+                <span>National Stock Exchange (NSE)</span>
+                <span className="meta" style={{ color: 'var(--teal)' }}>nseindia.com ↗</span>
+              </a>
+              <a
+                href="https://www.bseindia.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="btn ghost"
+                style={{ justifyContent: 'space-between', display: 'flex', alignItems: 'center' }}
+              >
+                <span>BSE India</span>
+                <span className="meta" style={{ color: 'var(--teal)' }}>bseindia.com ↗</span>
+              </a>
+              <a
+                href="https://www.mcxindia.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="btn ghost"
+                style={{ justifyContent: 'space-between', display: 'flex', alignItems: 'center' }}
+              >
+                <span>Multi Commodity Exchange (MCX)</span>
+                <span className="meta" style={{ color: 'var(--teal)' }}>mcxindia.com ↗</span>
+              </a>
+            </div>
           </section>
         </aside>
       </div>
