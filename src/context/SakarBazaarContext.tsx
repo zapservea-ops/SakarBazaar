@@ -23,7 +23,7 @@ import {
   checkEditorAuthorization,
   fetchPublishedEditorialArticles,
   fetchPublicVerifiedIpos,
-  refreshAuthSessionToken,
+  refreshFirebaseSession,
   signInWithGoogle,
   signOutUser,
 } from '../lib/firebase';
@@ -117,6 +117,13 @@ function buildFallbackMarketData(): MarketDataResponse {
   };
 }
 
+export interface SessionRefreshResult {
+  ok: boolean;
+  status: 'refreshed' | 'revoked' | 'expired' | 'unauthenticated' | 'error';
+  message: string;
+  role: AdminRole;
+}
+
 interface SakarBazaarContextValue {
   theme: ThemeMode;
   lang: LanguageCode;
@@ -151,7 +158,7 @@ interface SakarBazaarContextValue {
   refreshArticles: () => Promise<void>;
   refreshIpos: () => Promise<void>;
   refreshMarketData: () => Promise<void>;
-  refreshAuthSession: () => Promise<void>;
+  refreshAuthSession: () => Promise<SessionRefreshResult>;
   signInEditor: () => Promise<void>;
   signOutEditor: () => Promise<void>;
 }
@@ -434,14 +441,77 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     setAdminRole(authStatus.adminRole);
   }
 
-  async function refreshAuthSession() {
-    await refreshAuthSessionToken();
-    const current = auth.currentUser;
-    const authStatus = await checkEditorAuthorization(current);
-    setUser(current);
-    setIsAuthorizedEditor(authStatus.authorized);
-    setEditorRole(authStatus.role);
-    setAdminRole(authStatus.adminRole);
+  async function refreshAuthSession(): Promise<SessionRefreshResult> {
+    try {
+      const tokenOutcome = await refreshFirebaseSession();
+      if (!tokenOutcome.ok) {
+        if (tokenOutcome.reason === 'expired' || tokenOutcome.reason === 'disabled') {
+          try {
+            await signOutUser();
+          } catch {
+            // Best effort sign-out when token expired or user disabled
+          }
+          setUser(null);
+          setIsAuthorizedEditor(false);
+          setEditorRole('none');
+          setAdminRole('none');
+          return {
+            ok: false,
+            status: 'expired',
+            message: tokenOutcome.message || 'Session expired. Please sign in again.',
+            role: 'none',
+          };
+        }
+        if (tokenOutcome.reason === 'unauthenticated') {
+          setUser(null);
+          setIsAuthorizedEditor(false);
+          setEditorRole('none');
+          setAdminRole('none');
+          return {
+            ok: false,
+            status: 'unauthenticated',
+            message: tokenOutcome.message || 'No active Google sign-in session.',
+            role: 'none',
+          };
+        }
+        return {
+          ok: false,
+          status: 'error',
+          message: tokenOutcome.message || 'Failed to refresh authentication session.',
+          role: adminRole,
+        };
+      }
+
+      const current = auth.currentUser;
+      const authStatus = await checkEditorAuthorization(current);
+      setUser(current);
+      setIsAuthorizedEditor(authStatus.authorized);
+      setEditorRole(authStatus.role);
+      setAdminRole(authStatus.adminRole);
+
+      if (!authStatus.authorized || authStatus.adminRole === 'none') {
+        return {
+          ok: false,
+          status: 'revoked',
+          message: `Access is not active or has been revoked for ${current?.email || 'this account'}.`,
+          role: 'none',
+        };
+      }
+
+      return {
+        ok: true,
+        status: 'refreshed',
+        message: `Session token and ${authStatus.adminRole === 'owner' ? 'Owner' : 'Publisher'} permissions refreshed.`,
+        role: authStatus.adminRole,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Unable to refresh authentication session.',
+        role: adminRole,
+      };
+    }
   }
 
   async function signOutEditor() {

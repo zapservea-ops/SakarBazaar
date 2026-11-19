@@ -37,10 +37,26 @@ service cloud.firestore {
         request.auth.token.email.lower() == 'jeetsheetalpuri@gmail.com';
     }
 
+    function isEmailExplicitlyRevoked() {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
+        exists(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.active == false;
+    }
+
+    function isEmailExplicitlyNotOwner() {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
+        exists(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.role != 'owner';
+    }
+
     function isOwner() {
       return isVerifiedUser() && (
         isBootstrappedOwner() ||
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        (!isEmailExplicitlyRevoked() &&
+          !isEmailExplicitlyNotOwner() &&
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['owner', 'admin'])
       );
     }
@@ -55,8 +71,10 @@ service cloud.firestore {
     function isAuthorizedUser() {
       return isVerifiedUser() && (
         isBootstrappedOwner() ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        isEmailAllowlisted()
+        (!isEmailExplicitlyRevoked() && (
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+          isEmailAllowlisted()
+        ))
       );
     }
 
@@ -434,11 +452,17 @@ service cloud.firestore {
         isAuthorizedUser() ||
         (
           existing().status == 'Published' &&
-          (!('expiresAt' in existing()) || (existing().expiresAt is timestamp && existing().expiresAt > request.time)) &&
-          (!('deletionStatus' in existing()) || existing().deletionStatus == 'none')
+          existing().expiresAt is timestamp &&
+          existing().expiresAt > request.time &&
+          existing().deletionStatus == 'none'
         )
       );
-      allow list: if resource.data.status == 'Published' || isAuthorizedUser();
+      allow list: if isAuthorizedUser() || (
+        resource.data.status == 'Published' &&
+        resource.data.expiresAt is timestamp &&
+        resource.data.expiresAt > request.time &&
+        resource.data.deletionStatus == 'none'
+      );
       allow create: if isValidId(articleId) && isAuthorizedUser() && isValidArticle(incoming()) &&
         incoming().createdByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
@@ -497,7 +521,7 @@ service cloud.firestore {
           (!('expiresAt' in existing()) || existing().expiresAt == null || (existing().expiresAt is timestamp && existing().expiresAt > request.time))
         )
       );
-      allow list: if resource.data.isPublic == true || isAuthorizedUser();
+      allow list: if isAuthorizedUser();
       allow create: if isValidId(mediaId) && isAuthorizedUser() && isValidMediaAsset(incoming()) &&
         incoming().uploadedByUid == request.auth.uid &&
         incoming().createdAt == request.time;

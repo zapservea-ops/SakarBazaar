@@ -1,21 +1,31 @@
-import { useState } from 'react';
-import { saveManagedIpoRecord } from '../../lib/firebase';
+import { useRef, useState } from 'react';
+import {
+  runOfficialSebiSourceCheckAndQueue,
+  saveManagedIpoRecord,
+  type SebiCheckQueueResult,
+} from '../../lib/firebase';
 import type { IpoSegment, ManagedIpoRecord } from '../../types/sakarbazaar';
 import { calculateIpoStatusFromDates, formatOfficialIpoField } from '../../utils/ipoLifecycle';
-import { slugifyTitle } from '../../utils/marketFormat';
+import { extractReadableErrorMessage, extractTimestampMillis, sanitizeArticleSlug } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 interface AdminIpoManagerProps extends AdminSectionBaseProps {
   onPublicContentChanged: () => Promise<void>;
 }
 
+const OFFICIAL_SEBI_URL =
+  'https://www.sebi.gov.in/sebiweb/home/HomeAction.do?doListing=yes&sid=3&ssid=15&smid=11';
+
 export function AdminIpoManager({
   data,
   onRefresh,
+  onNavigate,
   onPublicContentChanged,
   onNotify,
 }: AdminIpoManagerProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [existingDocs, setExistingDocs] = useState<string[]>([]);
   const [companyName, setCompanyName] = useState('');
   const [segment, setSegment] = useState<IpoSegment>('Mainboard');
   const [verificationStatus, setVerificationStatus] = useState<'awaiting_verification' | 'verified'>('verified');
@@ -34,6 +44,13 @@ export function AdminIpoManager({
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const [checkingSebi, setCheckingSebi] = useState(false);
+  const [sebiReport, setSebiReport] = useState<SebiCheckQueueResult | null>(null);
+  const busyRef = useRef(false);
+  const checkingSebiRef = useRef(false);
+  const pendingIpoIdRef = useRef<string | null>(null);
+  const editingUpdatedAtMsRef = useRef<number | null>(null);
+
   const previewStatus = calculateIpoStatusFromDates({
     openingDate,
     closingDate,
@@ -42,7 +59,11 @@ export function AdminIpoManager({
   });
 
   function resetForm() {
+    pendingIpoIdRef.current = null;
+    editingUpdatedAtMsRef.current = null;
     setEditingId(null);
+    setEditingSlug(null);
+    setExistingDocs([]);
     setCompanyName('');
     setSegment('Mainboard');
     setVerificationStatus('verified');
@@ -62,7 +83,11 @@ export function AdminIpoManager({
   }
 
   function loadIpo(item: ManagedIpoRecord) {
+    pendingIpoIdRef.current = item.id;
+    editingUpdatedAtMsRef.current = extractTimestampMillis(item.updatedAt);
     setEditingId(item.id);
+    setEditingSlug(item.slug);
+    setExistingDocs(item.officialDocuments ?? []);
     setCompanyName(item.companyName);
     setSegment(item.segment);
     setVerificationStatus(item.verificationStatus);
@@ -82,14 +107,26 @@ export function AdminIpoManager({
   }
 
   async function handleSave() {
+    if (busyRef.current) return;
     if (companyName.trim().length < 2) {
       onNotify({ tone: 'err', text: 'Company name is required.' });
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
-      const slug = slugifyTitle(companyName) || `ipo-${Date.now().toString(36)}`;
-      const id = editingId || `ipo_${slug.slice(0, 80)}_${Date.now().toString(36)}`;
+      const slug = editingSlug || sanitizeArticleSlug(companyName, 'ipo');
+      if (!editingId && !pendingIpoIdRef.current) {
+        pendingIpoIdRef.current = `ipo_${slug.slice(0, 80)}_${Date.now().toString(36)}`;
+      }
+      const id = editingId || pendingIpoIdRef.current!;
+      const mergedDocs = [
+        ...new Set([
+          ...existingDocs,
+          ...(sourceUrl.trim() ? [sourceUrl.trim()] : []),
+        ].filter(Boolean)),
+      ].slice(0, 6);
+
       await saveManagedIpoRecord(
         {
           id,
@@ -110,10 +147,11 @@ export function AdminIpoManager({
           sourceName,
           sourceUrl,
           summary,
-          officialDocuments: sourceUrl.trim() ? [sourceUrl.trim()] : [],
+          officialDocuments: mergedDocs,
           verificationStatus,
         },
         !editingId,
+        editingId ? editingUpdatedAtMsRef.current : null,
       );
       await onRefresh();
       await onPublicContentChanged();
@@ -123,11 +161,52 @@ export function AdminIpoManager({
         text: `Saved IPO record "${companyName.trim()}" (${previewStatus}).`,
       });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Unable to save IPO record.' });
+      onNotify({
+        tone: 'err',
+        text: extractReadableErrorMessage(err, 'Unable to save IPO record.'),
+      });
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
+
+  async function handleCheckOfficialSebiSource() {
+    if (checkingSebiRef.current || checkingSebi) return;
+    checkingSebiRef.current = true;
+    setCheckingSebi(true);
+    try {
+      const report = await runOfficialSebiSourceCheckAndQueue({
+        forceRefresh: false,
+        existingIpos: data.ipos,
+        existingReviews: data.ipoReviews,
+      });
+      setSebiReport(report);
+      await onRefresh();
+      const sebiPortal = report.portals[0];
+      if (sebiPortal && sebiPortal.status !== 'reachable') {
+        onNotify({
+          tone: 'err',
+          text: `${sebiPortal.portalName} (${sebiPortal.status}): ${sebiPortal.message}`,
+        });
+      } else {
+        onNotify({
+          tone: 'ok',
+          text: `Official SEBI check complete: ${report.candidatesCount} filing(s) found, ${report.queuedCount} new/updated item(s) placed in Needs Review.`,
+        });
+      }
+    } catch (err) {
+      onNotify({
+        tone: 'err',
+        text: extractReadableErrorMessage(err, 'Official SEBI source check failed.'),
+      });
+    } finally {
+      checkingSebiRef.current = false;
+      setCheckingSebi(false);
+    }
+  }
+
+  const pendingReviewsCount = data.ipoReviews.filter((r) => r.reviewStatus === 'Needs Review').length;
 
   return (
     <div className="sb-admin-stack">
@@ -140,12 +219,76 @@ export function AdminIpoManager({
               Missing fields display cleanly as <strong>Not announced</strong>.
             </p>
           </div>
-          {editingId && (
-            <button type="button" className="btn ghost sb-admin-touch-btn" onClick={resetForm}>
-              + New IPO Entry
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn sb-admin-touch-btn"
+              disabled={checkingSebi}
+              onClick={() => void handleCheckOfficialSebiSource()}
+            >
+              {checkingSebi ? 'Checking SEBI Source…' : 'Check Official SEBI Source'}
             </button>
-          )}
+            {pendingReviewsCount > 0 && (
+              <button
+                type="button"
+                className="btn ghost sb-admin-touch-btn"
+                onClick={() => onNavigate('ipo-review')}
+              >
+                Review Queue ({pendingReviewsCount}) →
+              </button>
+            )}
+            {editingId && (
+              <button type="button" className="btn ghost sb-admin-touch-btn" onClick={resetForm}>
+                + New IPO Entry
+              </button>
+            )}
+          </div>
         </div>
+
+        <div className="sb-note-box" style={{ marginBottom: '14px' }}>
+          <strong>SEBI-Only Official Verification:</strong> Automated checks retrieve ONLY{' '}
+          <a href={OFFICIAL_SEBI_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--teal)' }}>
+            sebi.gov.in Public Issues ↗
+          </a>{' '}
+          and linked SEBI documents. New or changed items always go to{' '}
+          <strong>10. IPO Source Review</strong> for Owner/Publisher approval before public display.
+        </div>
+
+        {sebiReport && sebiReport.portals.length > 0 && (
+          <div className="sb-admin-subpanel" style={{ marginBottom: '14px' }}>
+            {sebiReport.portals.map((p) => (
+              <div key={p.portalId}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '6px' }}>
+                  <strong>{p.portalName}</strong>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span className={`pill ${p.status === 'reachable' ? 'sb-pill-teal' : 'sb-pill-amber'}`}>
+                      {p.status}
+                    </span>
+                    {sebiReport.cached && <span className="pill sb-pill-muted">Cached</span>}
+                    {typeof p.pagesChecked === 'number' && (
+                      <span className="meta">Pages checked: {p.pagesChecked}</span>
+                    )}
+                  </div>
+                </div>
+                <p className="meta" style={{ margin: '0 0 8px', lineHeight: 1.5 }}>{p.message}</p>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <span className="meta">
+                    Candidates: <strong>{sebiReport.candidatesCount}</strong> · Queued for review:{' '}
+                    <strong>{sebiReport.queuedCount}</strong> · Duplicates skipped:{' '}
+                    <strong>{sebiReport.skippedDuplicateCount}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    onClick={() => onNavigate('ipo-review')}
+                  >
+                    Open IPO Source Review →
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="sb-form-grid">
           <label className="sb-form-field">
@@ -238,13 +381,28 @@ export function AdminIpoManager({
         <div className="sb-form-grid">
           <label className="sb-form-field">
             <span>Official Source Name (Optional)</span>
-            <input type="text" value={sourceName} onChange={(e) => setSourceName(e.target.value)} placeholder="SEBI / NSE / BSE" />
+            <input type="text" value={sourceName} onChange={(e) => setSourceName(e.target.value)} placeholder="SEBI Official Public Issues" />
           </label>
           <label className="sb-form-field">
             <span>Official Filing URL (Optional)</span>
             <input type="url" value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} placeholder="https://www.sebi.gov.in/..." />
           </label>
         </div>
+
+        {existingDocs.length > 0 && (
+          <div className="sb-note-box" style={{ marginBottom: '12px' }}>
+            <strong>Preserved Official SEBI Documents ({existingDocs.length}):</strong>
+            <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+              {existingDocs.map((docUrl, i) => (
+                <li key={i}>
+                  <a href={docUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--teal)' }}>
+                    {docUrl} ↗
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <label className="sb-form-field">
           <span>Summary / Dossier Notes</span>
@@ -278,6 +436,14 @@ export function AdminIpoManager({
                 <div className="meta">
                   Size: {formatOfficialIpoField(ipo.issueSize)} · Price Band: {formatOfficialIpoField(ipo.priceBand)} · SEBI Filing: {formatOfficialIpoField(ipo.filingDate)}
                 </div>
+                {ipo.sourceUrl && (
+                  <div className="meta" style={{ marginTop: '4px' }}>
+                    Source:{' '}
+                    <a href={ipo.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--teal)' }}>
+                      {ipo.sourceName || 'Official SEBI Link'} ↗
+                    </a>
+                  </div>
+                )}
                 <div className="sb-admin-item-actions" style={{ marginTop: '10px' }}>
                   <button type="button" className="btn ghost" onClick={() => loadIpo(ipo)}>
                     Edit IPO
@@ -288,7 +454,7 @@ export function AdminIpoManager({
           </div>
         ) : (
           <p className="meta" style={{ margin: 0 }}>
-            No custom Firestore IPO records yet. Add one above or run IPO Source Review to import official candidates.
+            No custom Firestore IPO records yet. Click <strong>Check Official SEBI Source</strong> above or add one manually.
           </p>
         )}
       </section>

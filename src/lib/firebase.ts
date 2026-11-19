@@ -18,10 +18,12 @@ import {
   limit,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { MEDIA_ASSETS } from '../data/editorialData';
@@ -51,14 +53,37 @@ import {
   normalizeEmailKey,
 } from '../utils/adminPermissions';
 import { resolveMediaById } from '../utils/articleMedia';
-import { buildSakarBazaarBackupBundle, validateBackupBundle } from '../utils/backupRestore';
-import { calculateIpoStatusFromDates, mapManagedIpoToPublicRow } from '../utils/ipoLifecycle';
+import {
+  buildSakarBazaarBackupBundle,
+  prepareRestoredArticlePayload,
+  prepareRestoredIpoPayload,
+  prepareRestoredMediaBlobPayload,
+  prepareRestoredMediaPayload,
+  prepareRestoredPaidCampaignPayload,
+  validateBackupBundle,
+} from '../utils/backupRestore';
+import {
+  assertReviewPendingResolution,
+  calculateIpoStatusFromDates,
+  detectIpoFieldDiffs,
+  findMatchingManagedIpo,
+  hasDuplicateIpoReview,
+  mapManagedIpoToPublicRow,
+  type DetectedIpoCandidate,
+} from '../utils/ipoLifecycle';
 import {
   canSafelyDeleteMediaAsset,
   computeMediaVisibilityFromArticles,
   parseYouTubeVideoUrl,
 } from '../utils/mediaLibrary';
-import { isArticleExpired, isArticlePubliclyVisible } from '../utils/newsLifecycle';
+import {
+  ConflictError,
+  assertDocumentVersionUnchanged,
+  computeExpiresAtMs,
+  isArticleExpired,
+  isArticlePubliclyVisible,
+  sanitizeArticleSlug,
+} from '../utils/newsLifecycle';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -173,11 +198,70 @@ export async function signOutUser(): Promise<void> {
   await signOut(auth);
 }
 
-export async function refreshAuthSessionToken(): Promise<boolean> {
+export interface FirebaseSessionRefreshOutcome {
+  ok: boolean;
+  reason?: 'unauthenticated' | 'expired' | 'disabled' | 'network' | 'error';
+  message?: string;
+}
+
+export async function refreshFirebaseSession(): Promise<FirebaseSessionRefreshOutcome> {
   const current = auth.currentUser;
-  if (!current) return false;
-  await current.getIdToken(true);
-  return true;
+  if (!current) {
+    return {
+      ok: false,
+      reason: 'unauthenticated',
+      message: 'No signed-in Google account session found. Sign in to continue.',
+    };
+  }
+  try {
+    await current.reload();
+    await current.getIdToken(true);
+    return { ok: true };
+  } catch (err) {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: unknown }).code ?? '')
+        : '';
+    const msg = err instanceof Error ? err.message : String(err);
+
+    if (code === 'auth/user-disabled') {
+      return {
+        ok: false,
+        reason: 'disabled',
+        message: 'This Google account has been disabled in Firebase Authentication.',
+      };
+    }
+    if (
+      code === 'auth/user-token-expired' ||
+      code === 'auth/invalid-user-token' ||
+      code === 'auth/user-not-found' ||
+      msg.includes('TOKEN_EXPIRED') ||
+      msg.includes('INVALID_ID_TOKEN')
+    ) {
+      return {
+        ok: false,
+        reason: 'expired',
+        message: 'Your Google sign-in session expired. Please sign in again.',
+      };
+    }
+    if (code === 'auth/network-request-failed') {
+      return {
+        ok: false,
+        reason: 'network',
+        message: 'Network error while contacting Firebase Authentication. Check your connection and retry.',
+      };
+    }
+    return {
+      ok: false,
+      reason: 'error',
+      message: msg || 'Unable to refresh authentication session.',
+    };
+  }
+}
+
+export async function refreshAuthSessionToken(): Promise<boolean> {
+  const outcome = await refreshFirebaseSession();
+  return outcome.ok;
 }
 
 export interface EditorAuthResult {
@@ -213,6 +297,54 @@ export async function checkEditorAuthorization(user: User | null): Promise<Edito
     return { authorized: true, role: 'admin', adminRole: 'owner' };
   }
 
+  // First check authorizedEmails/{emailLower} so explicit revocation (active === false)
+  // immediately overrides any previously auto-created /admins/{uid} profile doc.
+  try {
+    const allowSnap = await getDoc(doc(db, 'authorizedEmails', emailLower));
+    if (allowSnap.exists()) {
+      const data = allowSnap.data();
+      if (data.active !== true) {
+        return { authorized: false, role: 'none', adminRole: 'none' };
+      }
+      const adminRole = normalizeAdminRole(String(data.role ?? 'publisher'), user.email);
+      if (adminRole !== 'none') {
+        try {
+          const adminRef = doc(db, 'admins', user.uid);
+          const adminSnap = await getDoc(adminRef);
+          if (!adminSnap.exists()) {
+            await setDoc(adminRef, {
+              uid: user.uid,
+              email: emailLower,
+              displayName: (user.displayName || String(data.displayName || 'SakarBazaar Publisher')).slice(0, 120),
+              role: adminRole,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          } else {
+            // authorizedEmails role takes precedence if Owner downgraded/changed an operator's role
+            const existingRole = normalizeAdminRole(String(adminSnap.data().role ?? ''), user.email);
+            if (existingRole !== adminRole) {
+              return {
+                authorized: true,
+                role: adminRole === 'owner' ? 'admin' : 'editor',
+                adminRole,
+              };
+            }
+          }
+        } catch {
+          // Even if profile creation fails, allowlist in rules still authorizes operator
+        }
+        return {
+          authorized: true,
+          role: adminRole === 'owner' ? 'admin' : 'editor',
+          adminRole,
+        };
+      }
+    }
+  } catch {
+    // Fall through to admins/{uid} check
+  }
+
   try {
     const adminSnap = await getDoc(doc(db, 'admins', user.uid));
     if (adminSnap.exists()) {
@@ -224,38 +356,6 @@ export async function checkEditorAuthorization(user: User | null): Promise<Edito
           role: adminRole === 'owner' ? 'admin' : 'editor',
           adminRole,
         };
-      }
-    }
-  } catch {
-    // Fall through to allowlisted email check
-  }
-
-  try {
-    const allowSnap = await getDoc(doc(db, 'authorizedEmails', emailLower));
-    if (allowSnap.exists()) {
-      const data = allowSnap.data();
-      if (data.active === true) {
-        const adminRole = normalizeAdminRole(String(data.role ?? 'publisher'), user.email);
-        if (adminRole !== 'none') {
-          // Auto-bootstrap /admins/{uid} doc per firestore.rules
-          try {
-            await setDoc(doc(db, 'admins', user.uid), {
-              uid: user.uid,
-              email: emailLower,
-              displayName: (user.displayName || String(data.displayName || 'SakarBazaar Publisher')).slice(0, 120),
-              role: adminRole,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          } catch {
-            // Even if profile creation fails, allowlist in rules still authorizes operator
-          }
-          return {
-            authorized: true,
-            role: adminRole === 'owner' ? 'admin' : 'editor',
-            adminRole,
-          };
-        }
       }
     }
   } catch {
@@ -570,14 +670,36 @@ async function resolveRemoteMediaRecord(mediaId: string): Promise<MediaAssetReco
   return undefined;
 }
 
+async function queryPublishedArticleDocs(minExpiresAtMs: number) {
+  const q = query(
+    collection(db, 'articles'),
+    where('status', '==', 'Published'),
+    where('deletionStatus', '==', 'none'),
+    where('expiresAt', '>', Timestamp.fromMillis(minExpiresAtMs)),
+    limit(40),
+  );
+  return getDocs(q);
+}
+
 export async function fetchPublishedEditorialArticles(): Promise<ArticleRecord[]> {
   try {
-    const q = query(
-      collection(db, 'articles'),
-      where('status', '==', 'Published'),
-      limit(40),
-    );
-    const snap = await getDocs(q);
+    let snap;
+    try {
+      // Match Firestore security rules (expiresAt > request.time) with a small forward clock skew buffer.
+      snap = await queryPublishedArticleDocs(Date.now() + 30_000);
+    } catch (firstErr) {
+      const msg = firstErr instanceof Error ? firstErr.message.toLowerCase() : String(firstErr).toLowerCase();
+      if (!msg.includes('permission') && !msg.includes('missing or insufficient')) {
+        throw firstErr;
+      }
+      // Recover gracefully if local device clock lags behind Google server request.time
+      const healthRes = await fetch('/api/health');
+      if (!healthRes.ok) throw firstErr;
+      const healthJson = (await healthRes.json()) as { serverTimeMs?: number };
+      const syncedNow = typeof healthJson.serverTimeMs === 'number' ? healthJson.serverTimeMs : Date.now();
+      snap = await queryPublishedArticleDocs(syncedNow + 10_000);
+    }
+
     const nowMs = Date.now();
     const visibleDocs = snap.docs
       .map((d) => ({
@@ -646,6 +768,7 @@ export async function saveEditorialArticle(params: {
   articleId: string;
   isNew: boolean;
   previousStatus?: EditorialWorkflowStatus;
+  expectedUpdatedAtMs?: number | null;
   action:
     | 'create_draft'
     | 'ai_brief'
@@ -666,34 +789,84 @@ export async function saveEditorialArticle(params: {
   const safeId = safeDocId(params.articleId, 'art');
   const articlePath = `articles/${safeId}`;
   const rawPayload = params.payload as Record<string, unknown>;
-  const expiresAtMs =
+  const nowMs = Date.now();
+  const requestedStatus = String(rawPayload.status ?? 'Draft');
+  let expiresAtMs =
     typeof rawPayload.expiresAtMs === 'number' && Number.isFinite(rawPayload.expiresAtMs)
       ? rawPayload.expiresAtMs
       : null;
+  if (requestedStatus === 'Published' && expiresAtMs === null) {
+    const fallbackHours =
+      typeof rawPayload.durationHours === 'number' && Number.isFinite(rawPayload.durationHours)
+        ? rawPayload.durationHours
+        : 360;
+    expiresAtMs = computeExpiresAtMs(nowMs, fallbackHours);
+  }
+
+  const safeSlug = sanitizeArticleSlug(
+    String(rawPayload.slug || rawPayload.enHeadline || rawPayload.title || safeId),
+    'dispatch',
+  );
 
   try {
     const baseData = stripUndefined({
       ...rawPayload,
+      slug: safeSlug,
       expiresAtMs,
       expiresAt: expiresAtMs !== null ? Timestamp.fromMillis(expiresAtMs) : null,
+      deletionStatus: rawPayload.deletionStatus ?? 'none',
       updatedByUid: user.uid,
     });
+    // Ensure disallowed document ID / immutable fields never trigger Firestore hasOnly failures
+    delete baseData.id;
+    delete baseData.updatedAt;
 
-    if (params.isNew) {
-      await setDoc(doc(db, 'articles', safeId), {
-        ...baseData,
-        createdByUid: user.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      delete baseData.createdByUid;
-      delete baseData.createdAt;
-      await updateDoc(doc(db, 'articles', safeId), {
-        ...baseData,
-        updatedAt: serverTimestamp(),
-      });
-    }
+    const articleRef = doc(db, 'articles', safeId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(articleRef);
+      if (params.isNew) {
+        if (snap.exists()) {
+          throw new ConflictError(
+            `Conflict detected: Article "${safeId}" already exists in Firestore. Refresh Data before editing or choose another title.`,
+          );
+        }
+        tx.set(articleRef, {
+          ...baseData,
+          createdByUid: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        if (!snap.exists()) {
+          throw new ConflictError(
+            'Conflict detected: This article was permanently deleted by another operator session. Your entered edits remain preserved in the form.',
+          );
+        }
+        const current = snap.data() as Record<string, unknown>;
+        const currentDelStatus = String(current.deletionStatus ?? 'none');
+        if (
+          params.action !== 'restore_article' &&
+          (currentDelStatus === 'approved' || currentDelStatus === 'in_progress') &&
+          requestedStatus !== 'Pending Deletion' &&
+          requestedStatus !== 'Retained'
+        ) {
+          throw new ConflictError(
+            'Conflict detected: This article is currently queued or executing deletion in another session. Cancel deletion in section 8 before editing.',
+          );
+        }
+        assertDocumentVersionUnchanged({
+          entityLabel: 'article',
+          expectedUpdatedAtMs: params.expectedUpdatedAtMs,
+          currentUpdatedAt: current.updatedAt,
+        });
+        delete baseData.createdByUid;
+        delete baseData.createdAt;
+        tx.update(articleRef, {
+          ...baseData,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    });
 
     await writeAuditLog({
       action: params.action,
@@ -704,6 +877,9 @@ export async function saveEditorialArticle(params: {
       summary: `${params.action}: ${String(rawPayload.enHeadline || rawPayload.title || safeId).slice(0, 140)}`,
     });
   } catch (err) {
+    if (err instanceof ConflictError) {
+      throw err;
+    }
     handleFirestoreError(err, OperationType.WRITE, articlePath);
   }
 }
@@ -796,40 +972,60 @@ export async function updateFeaturedPlacementsInFirestore(
 ): Promise<void> {
   const user = auth.currentUser;
   if (!user) throw new Error('Authentication required.');
+  if (changes.length === 0) return;
+
+  const batch = writeBatch(db);
   for (const ch of changes) {
-    await updateDoc(doc(db, 'articles', safeDocId(ch.id, 'art')), {
+    batch.update(doc(db, 'articles', safeDocId(ch.id, 'art')), {
       featuredPlacement: ch.featuredPlacement ?? 'none',
       featuredOrder: ch.featuredOrder,
       updatedByUid: user.uid,
       updatedAt: serverTimestamp(),
     });
   }
-  if (changes.length > 0) {
-    await writeAuditLog({
-      action: 'update',
-      entityType: 'article',
-      entityId: changes[0].id,
-      nextStatus: 'FeaturedUpdated',
-      summary: `Updated featured homepage placement for ${changes.length} article(s).`,
-    });
-  }
+  await batch.commit();
+
+  await writeAuditLog({
+    action: 'update',
+    entityType: 'article',
+    entityId: changes[0].id,
+    nextStatus: 'FeaturedUpdated',
+    summary: `Updated featured homepage placement for ${changes.length} article(s).`,
+  });
 }
 
 export async function approveArticleForPermanentDeletion(article: StoredArticleDoc): Promise<void> {
   const user = auth.currentUser;
   if (!user || !user.email) throw new Error('Authentication required.');
   const safeId = safeDocId(article.id, 'art');
+  const articleRef = doc(db, 'articles', safeId);
 
-  await updateDoc(doc(db, 'articles', safeId), {
-    status: 'Pending Deletion',
-    deletionStatus: 'approved',
-    deletionApprovedByUid: user.uid,
-    deletionApprovedByEmail: user.email,
-    deletionApprovedAtMs: Date.now(),
-    deletionError: '',
-    updatedByUid: user.uid,
-    updatedAt: serverTimestamp(),
+  const alreadyApproved = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(articleRef);
+    if (!snap.exists()) {
+      throw new ConflictError('Article no longer exists in Firestore. Refresh Data to update the list.');
+    }
+    const cur = snap.data() as { deletionStatus?: string };
+    if (cur.deletionStatus === 'in_progress') {
+      throw new ConflictError('Permanent deletion is currently executing for this article in another session.');
+    }
+    if (cur.deletionStatus === 'approved') {
+      return true;
+    }
+    tx.update(articleRef, {
+      status: 'Pending Deletion',
+      deletionStatus: 'approved',
+      deletionApprovedByUid: user.uid,
+      deletionApprovedByEmail: user.email,
+      deletionApprovedAtMs: Date.now(),
+      deletionError: '',
+      updatedByUid: user.uid,
+      updatedAt: serverTimestamp(),
+    });
+    return false;
   });
+
+  if (alreadyApproved) return;
 
   await writeAuditLog({
     action: 'approve_delete',
@@ -845,14 +1041,25 @@ export async function cancelArticleDeletionApproval(article: StoredArticleDoc): 
   const user = auth.currentUser;
   if (!user || !user.email) throw new Error('Authentication required.');
   const safeId = safeDocId(article.id, 'art');
+  const articleRef = doc(db, 'articles', safeId);
 
-  await updateDoc(doc(db, 'articles', safeId), {
-    status: 'Retained',
-    retainedPrivate: true,
-    deletionStatus: 'none',
-    deletionError: '',
-    updatedByUid: user.uid,
-    updatedAt: serverTimestamp(),
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(articleRef);
+    if (!snap.exists()) {
+      throw new ConflictError('Article was already deleted. Refresh Data to sync workspace.');
+    }
+    const cur = snap.data() as { deletionStatus?: string };
+    if (cur.deletionStatus === 'in_progress') {
+      throw new ConflictError('Deletion is actively executing right now and cannot be cancelled mid-flight.');
+    }
+    tx.update(articleRef, {
+      status: 'Retained',
+      retainedPrivate: true,
+      deletionStatus: 'none',
+      deletionError: '',
+      updatedByUid: user.uid,
+      updatedAt: serverTimestamp(),
+    });
   });
 
   await writeAuditLog({
@@ -866,8 +1073,8 @@ export async function cancelArticleDeletionApproval(article: StoredArticleDoc): 
 }
 
 /**
- * Executes permanent deletion safely with partial-failure tracking:
- * 1. Marks 'Deletion In Progress'
+ * Executes permanent deletion safely with atomic lock acquisition and partial-failure tracking:
+ * 1. Atomically claims 'Deletion In Progress' via runTransaction (blocks parallel double-deletion)
  * 2. Deletes unshared media + mediaPayloads ONLY (preserves shared media used by other articles)
  * 3. Deletes the article document
  * 4. Writes immutable 'complete_delete' audit log
@@ -880,17 +1087,37 @@ export async function executePermanentArticleDeletion(
   const user = auth.currentUser;
   if (!user || !user.email) throw new Error('Authentication required.');
   const safeId = safeDocId(article.id, 'art');
+  const articleRef = doc(db, 'articles', safeId);
   const isRetry = article.deletionStatus === 'partial_failure';
-  const attempts = (article.deletionAttempts ?? 0) + 1;
+  let attempts = (article.deletionAttempts ?? 0) + 1;
 
   try {
-    await updateDoc(doc(db, 'articles', safeId), {
-      status: 'Deletion In Progress',
-      deletionStatus: 'in_progress',
-      deletionAttempts: attempts,
-      updatedByUid: user.uid,
-      updatedAt: serverTimestamp(),
+    const claim = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(articleRef);
+      if (!snap.exists()) {
+        return { alreadyDeleted: true as const };
+      }
+      const cur = snap.data() as { deletionStatus?: string; deletionAttempts?: number };
+      if (cur.deletionStatus === 'in_progress' && article.deletionStatus !== 'in_progress') {
+        throw new ConflictError('Deletion is already running in another operator tab or session.');
+      }
+      attempts = (cur.deletionAttempts ?? article.deletionAttempts ?? 0) + 1;
+      tx.update(articleRef, {
+        status: 'Deletion In Progress',
+        deletionStatus: 'in_progress',
+        deletionAttempts: attempts,
+        updatedByUid: user.uid,
+        updatedAt: serverTimestamp(),
+      });
+      return { alreadyDeleted: false as const };
     });
+
+    if (claim.alreadyDeleted) {
+      return {
+        status: 'deleted',
+        message: 'Article was already removed from Firestore; workspace refreshed.',
+      };
+    }
 
     await writeAuditLog({
       action: isRetry ? 'retry_delete' : 'start_delete',
@@ -915,7 +1142,7 @@ export async function executePermanentArticleDeletion(
       }
     }
 
-    await deleteDoc(doc(db, 'articles', safeId));
+    await deleteDoc(articleRef);
 
     await writeAuditLog({
       action: 'complete_delete',
@@ -931,9 +1158,12 @@ export async function executePermanentArticleDeletion(
       message: 'Article and unshared media permanently deleted; audit log recorded.',
     };
   } catch (err) {
+    if (err instanceof ConflictError) {
+      return { status: 'partial_failure', message: err.message };
+    }
     const errMsg = err instanceof Error ? err.message : 'Unknown error during permanent deletion.';
     try {
-      await updateDoc(doc(db, 'articles', safeId), {
+      await updateDoc(articleRef, {
         status: 'Pending Deletion',
         deletionStatus: 'partial_failure',
         deletionError: errMsg.slice(0, 480),
@@ -1032,17 +1262,29 @@ export async function saveCompressedPhotoAsset(params: {
         associatedArticleIds: params.associatedArticleIds ?? [],
         updatedAt: serverTimestamp(),
       });
-      await setDoc(doc(db, 'mediaPayloads', safeId), {
-        mediaId: safeId,
-        mimeType: params.mimeType,
-        sizeBytes: params.sizeBytes,
-        dataUrl: params.dataUrl,
-        isPublic: params.isPublic,
-        expiresAt: expiresAtTs,
-        uploadedByUid: user.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      const existingPayloadSnap = await getDoc(doc(db, 'mediaPayloads', safeId));
+      if (existingPayloadSnap.exists()) {
+        await updateDoc(doc(db, 'mediaPayloads', safeId), {
+          mimeType: params.mimeType,
+          sizeBytes: params.sizeBytes,
+          dataUrl: params.dataUrl,
+          isPublic: params.isPublic,
+          expiresAt: expiresAtTs,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(doc(db, 'mediaPayloads', safeId), {
+          mediaId: safeId,
+          mimeType: params.mimeType,
+          sizeBytes: params.sizeBytes,
+          dataUrl: params.dataUrl,
+          isPublic: params.isPublic,
+          expiresAt: expiresAtTs,
+          uploadedByUid: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
     } else {
       await setDoc(doc(db, 'media', safeId), {
         fileName: params.fileName.slice(0, 200),
@@ -1107,9 +1349,20 @@ export async function saveYouTubeMediaAsset(params: {
       ? Timestamp.fromMillis(params.expiresAtMs)
       : null;
 
-  await setDoc(
-    doc(db, 'media', safeId),
-    {
+  const mediaRef = doc(db, 'media', safeId);
+  const existingSnap = await getDoc(mediaRef);
+  const existingData = existingSnap.exists()
+    ? (existingSnap.data() as { associatedArticleIds?: string[] })
+    : undefined;
+  const mergedAssociatedIds = [
+    ...new Set([
+      ...(existingData?.associatedArticleIds ?? []),
+      ...(params.associatedArticleIds ?? []),
+    ].filter(Boolean)),
+  ].slice(0, 50);
+
+  if (existingSnap.exists()) {
+    await updateDoc(mediaRef, {
       fileName: `youtube-${params.youtubeVideoId}`.slice(0, 200),
       storagePath: `youtube:${params.youtubeVideoId}`,
       mediaType: 'video/youtube',
@@ -1122,13 +1375,29 @@ export async function saveYouTubeMediaAsset(params: {
       isPublic: params.isPublic,
       expiresAtMs: params.expiresAtMs ?? null,
       expiresAt: expiresAtTs,
-      associatedArticleIds: params.associatedArticleIds ?? [],
+      associatedArticleIds: mergedAssociatedIds,
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    await setDoc(mediaRef, {
+      fileName: `youtube-${params.youtubeVideoId}`.slice(0, 200),
+      storagePath: `youtube:${params.youtubeVideoId}`,
+      mediaType: 'video/youtube',
+      youtubeVideoId: params.youtubeVideoId,
+      youtubeUrl: params.youtubeUrl,
+      poster: `https://i.ytimg.com/vi/${params.youtubeVideoId}/hqdefault.jpg`,
+      captions: params.title.slice(0, 4000),
+      credit: params.credit.slice(0, 200),
+      usageRightsConfirmed: params.usageRightsConfirmed,
+      isPublic: params.isPublic,
+      expiresAtMs: params.expiresAtMs ?? null,
+      expiresAt: expiresAtTs,
+      associatedArticleIds: mergedAssociatedIds,
       uploadedByUid: user.uid,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
+    });
+  }
 
   clearSessionMediaCache(safeId);
   await writeAuditLog({
@@ -1183,16 +1452,32 @@ export async function recordMediaMetadata(input: {
   const safeId = safeDocId(input.mediaId, 'med');
   const path = `media/${safeId}`;
   try {
-    await setDoc(
-      doc(db, 'media', safeId),
-      {
-        ...input,
+    const mediaRef = doc(db, 'media', safeId);
+    const existingSnap = await getDoc(mediaRef);
+    const cleanPayload = {
+      fileName: input.fileName.slice(0, 200),
+      storagePath: input.storagePath.slice(0, 300),
+      mediaType: input.mediaType,
+      duration: input.duration,
+      width: input.width,
+      height: input.height,
+      captions: input.captions.slice(0, 4000),
+      transcript: input.transcript.slice(0, 10000),
+      associatedArticleId: input.associatedArticleId.slice(0, 128),
+    };
+    if (existingSnap.exists()) {
+      await updateDoc(mediaRef, {
+        ...cleanPayload,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(mediaRef, {
+        ...cleanPayload,
         uploadedByUid: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
+      });
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
   }
@@ -1217,10 +1502,12 @@ export async function fetchPaidCampaigns(): Promise<PaidCampaignRecord[]> {
 export async function savePaidCampaign(
   campaign: Omit<PaidCampaignRecord, 'createdByUid' | 'createdAt' | 'updatedAt'>,
   isNew: boolean,
+  expectedUpdatedAtMs?: number | null,
 ): Promise<void> {
   const user = auth.currentUser;
   if (!user) throw new Error('Authentication required.');
   const safeId = safeDocId(campaign.id, 'paid');
+  const campaignRef = doc(db, 'paidCampaigns', safeId);
   const cleanData = stripUndefined({
     clientName: campaign.clientName.trim().slice(0, 160),
     articleId: campaign.articleId?.trim() || undefined,
@@ -1235,19 +1522,34 @@ export async function savePaidCampaign(
     commercialNotes: campaign.commercialNotes?.trim().slice(0, 4000) || undefined,
   });
 
-  if (isNew) {
-    await setDoc(doc(db, 'paidCampaigns', safeId), {
-      ...cleanData,
-      createdByUid: user.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } else {
-    await updateDoc(doc(db, 'paidCampaigns', safeId), {
-      ...cleanData,
-      updatedAt: serverTimestamp(),
-    });
-  }
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(campaignRef);
+    if (isNew) {
+      if (snap.exists()) {
+        throw new ConflictError(`Conflict detected: Campaign "${safeId}" already exists. Refresh Data before retrying.`);
+      }
+      tx.set(campaignRef, {
+        ...cleanData,
+        createdByUid: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      if (!snap.exists()) {
+        throw new ConflictError('Conflict detected: This paid campaign record no longer exists.');
+      }
+      const cur = snap.data() as Record<string, unknown>;
+      assertDocumentVersionUnchanged({
+        entityLabel: 'paid campaign',
+        expectedUpdatedAtMs,
+        currentUpdatedAt: cur.updatedAt,
+      });
+      tx.update(campaignRef, {
+        ...cleanData,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  });
 
   await writeAuditLog({
     action: 'paid_update',
@@ -1296,10 +1598,12 @@ export async function fetchAllManagedIpos(): Promise<ManagedIpoRecord[]> {
 export async function saveManagedIpoRecord(
   record: Omit<ManagedIpoRecord, 'updatedByUid' | 'createdAt' | 'updatedAt'>,
   isNew: boolean,
+  expectedUpdatedAtMs?: number | null,
 ): Promise<void> {
   const user = auth.currentUser;
   if (!user) throw new Error('Authentication required.');
   const safeId = safeDocId(record.id, 'ipo');
+  const ipoRef = doc(db, 'ipos', safeId);
   const computedStatus = calculateIpoStatusFromDates({
     openingDate: record.openingDate,
     closingDate: record.closingDate,
@@ -1307,9 +1611,12 @@ export async function saveManagedIpoRecord(
     verificationStatus: record.verificationStatus,
   });
 
+  const safeSlug = sanitizeArticleSlug(record.slug || record.companyName, 'ipo');
+  const uniqueDocs = [...new Set((record.officialDocuments ?? []).map((u) => u.trim()).filter(Boolean))].slice(0, 6);
+
   const cleanData = stripUndefined({
     companyName: record.companyName.trim().slice(0, 160),
-    slug: record.slug.trim().toLowerCase().slice(0, 160),
+    slug: safeSlug,
     segment: record.segment,
     status: computedStatus,
     issueSize: record.issueSize?.trim() || undefined,
@@ -1323,7 +1630,7 @@ export async function saveManagedIpoRecord(
     sellingShareholder: record.sellingShareholder?.trim() || undefined,
     offerType: record.offerType?.trim() || undefined,
     summary: record.summary?.trim().slice(0, 2000) || undefined,
-    officialDocuments: (record.officialDocuments ?? []).filter(Boolean).slice(0, 6),
+    officialDocuments: uniqueDocs,
     sourceName: record.sourceName?.trim() || undefined,
     sourceUrl: record.sourceUrl?.trim() || undefined,
     verificationStatus: record.verificationStatus,
@@ -1334,18 +1641,33 @@ export async function saveManagedIpoRecord(
     updatedByUid: user.uid,
   });
 
-  if (isNew) {
-    await setDoc(doc(db, 'ipos', safeId), {
-      ...cleanData,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } else {
-    await updateDoc(doc(db, 'ipos', safeId), {
-      ...cleanData,
-      updatedAt: serverTimestamp(),
-    });
-  }
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ipoRef);
+    if (isNew) {
+      if (snap.exists()) {
+        throw new ConflictError(`Conflict detected: IPO dossier "${safeId}" already exists. Refresh Data before retrying.`);
+      }
+      tx.set(ipoRef, {
+        ...cleanData,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      if (!snap.exists()) {
+        throw new ConflictError('Conflict detected: This IPO dossier no longer exists in Firestore.');
+      }
+      const cur = snap.data() as Record<string, unknown>;
+      assertDocumentVersionUnchanged({
+        entityLabel: 'IPO dossier',
+        expectedUpdatedAtMs,
+        currentUpdatedAt: cur.updatedAt,
+      });
+      tx.update(ipoRef, {
+        ...cleanData,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  });
 
   await writeAuditLog({
     action: isNew ? 'create_draft' : 'update',
@@ -1416,81 +1738,242 @@ export async function resolveIpoSourceReview(params: {
   const user = auth.currentUser;
   if (!user || !user.email) throw new Error('Authentication required.');
   const nowIso = new Date().toISOString();
+  const safeReviewId = safeDocId(params.review.id, 'rev');
+  const revRef = doc(db, 'ipoSourceReviews', safeReviewId);
 
-  if (params.decision === 'Approved') {
-    const existingTarget = params.review.targetIpoId
+  const matchedHint =
+    (params.review.targetIpoId
       ? params.existingIpos.find((i) => i.id === params.review.targetIpoId)
-      : params.existingIpos.find(
-          (i) => i.companyName.toLowerCase() === params.review.companyName.toLowerCase(),
-        );
+      : undefined) ?? findMatchingManagedIpo(params.existingIpos, params.review.companyName);
 
-    const appliedFields: Record<string, string> = {};
-    for (const diff of params.review.diffs) {
-      if (diff.detectedValue && diff.detectedValue !== 'Not announced') {
-        appliedFields[diff.field] = diff.detectedValue;
+  const baseId = safeDocId(
+    matchedHint?.id ?? `ipo_${params.review.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    'ipo',
+  );
+  const ipoRef = doc(db, 'ipos', baseId);
+
+  const appliedFields: Record<string, string> = {};
+  const extraOfficialDocs: string[] = [];
+  for (const diff of params.review.diffs) {
+    if (diff.field === 'officialDocument' && diff.detectedValue && /^https?:\/\//i.test(diff.detectedValue)) {
+      extraOfficialDocs.push(diff.detectedValue.trim());
+    } else if (diff.detectedValue && diff.detectedValue !== 'Not announced') {
+      appliedFields[diff.field] = diff.detectedValue;
+    }
+  }
+
+  await runTransaction(db, async (tx) => {
+    const revSnap = await tx.get(revRef);
+    if (!revSnap.exists()) {
+      throw new ConflictError('This IPO review item no longer exists in Firestore. Refresh Data to sync.');
+    }
+    const latestReview = revSnap.data() as { reviewStatus?: string };
+    assertReviewPendingResolution(latestReview.reviewStatus, params.review.companyName);
+
+    let ipoSnap = null;
+    if (params.decision === 'Approved') {
+      ipoSnap = await tx.get(ipoRef);
+    }
+
+    if (params.decision === 'Approved') {
+      const existingTarget = ipoSnap?.exists()
+        ? ({ id: ipoSnap.id, ...(ipoSnap.data() as Omit<ManagedIpoRecord, 'id'>) })
+        : matchedHint;
+      const slug = existingTarget?.slug ?? sanitizeArticleSlug(params.review.companyName, 'ipo');
+      const mergedDocs = [
+        ...new Set(
+          [
+            ...(existingTarget?.officialDocuments ?? []),
+            ...extraOfficialDocs,
+            ...(params.review.sourceUrl ? [params.review.sourceUrl.trim()] : []),
+          ].filter(Boolean),
+        ),
+      ].slice(0, 6);
+
+      const merged = {
+        companyName: (existingTarget?.companyName ?? params.review.companyName).trim().slice(0, 160),
+        slug: sanitizeArticleSlug(slug, 'ipo'),
+        segment:
+          (appliedFields.segment as 'Mainboard' | 'SME') ||
+          existingTarget?.segment ||
+          params.review.segment,
+        issueSize: (appliedFields.issueSize ?? existingTarget?.issueSize)?.trim() || undefined,
+        priceBand: (appliedFields.priceBand ?? existingTarget?.priceBand)?.trim() || undefined,
+        lotSize: (appliedFields.lotSize ?? existingTarget?.lotSize)?.trim() || undefined,
+        filingDate: (appliedFields.filingDate ?? existingTarget?.filingDate)?.trim() || undefined,
+        openingDate: (appliedFields.openingDate ?? existingTarget?.openingDate)?.trim() || undefined,
+        closingDate: (appliedFields.closingDate ?? existingTarget?.closingDate)?.trim() || undefined,
+        allotmentDate: existingTarget?.allotmentDate?.trim() || undefined,
+        listingDate: (appliedFields.listingDate ?? existingTarget?.listingDate)?.trim() || undefined,
+        sellingShareholder: existingTarget?.sellingShareholder?.trim() || undefined,
+        offerType: existingTarget?.offerType?.trim() || undefined,
+        summary: (existingTarget?.summary || params.review.detectedSummary)?.trim().slice(0, 2000) || undefined,
+        officialDocuments: mergedDocs,
+        sourceName: (existingTarget?.sourceName || params.review.sourceName)?.trim() || undefined,
+        sourceUrl: (params.review.sourceUrl ?? existingTarget?.sourceUrl)?.trim() || undefined,
+        verificationStatus: 'verified' as const,
+        lastVerifiedAt: nowIso,
+        ...params.overrideUpdates,
+      };
+      const computedStatus = calculateIpoStatusFromDates({
+        openingDate: merged.openingDate,
+        closingDate: merged.closingDate,
+        listingDate: merged.listingDate,
+        verificationStatus: merged.verificationStatus,
+      });
+      const cleanIpoData = stripUndefined({
+        ...merged,
+        status: computedStatus,
+        updatedByUid: user.uid,
+      });
+
+      if (ipoSnap?.exists()) {
+        tx.update(ipoRef, {
+          ...cleanIpoData,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        tx.set(ipoRef, {
+          ...cleanIpoData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
       }
     }
 
-    const baseId =
-      existingTarget?.id ??
-      safeDocId(
-        `ipo_${params.review.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-        'ipo',
-      );
-    const slug =
-      existingTarget?.slug ??
-      (params.review.companyName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)/g, '') || `ipo-${Date.now()}`);
-
-    const merged: Omit<ManagedIpoRecord, 'updatedByUid' | 'createdAt' | 'updatedAt'> = {
-      id: baseId,
-      companyName: existingTarget?.companyName ?? params.review.companyName,
-      slug,
-      segment: (appliedFields.segment as 'Mainboard' | 'SME') || existingTarget?.segment || params.review.segment,
-      status: existingTarget?.status ?? 'Upcoming',
-      issueSize: appliedFields.issueSize ?? existingTarget?.issueSize,
-      priceBand: appliedFields.priceBand ?? existingTarget?.priceBand,
-      lotSize: appliedFields.lotSize ?? existingTarget?.lotSize,
-      filingDate: appliedFields.filingDate ?? existingTarget?.filingDate,
-      openingDate: appliedFields.openingDate ?? existingTarget?.openingDate,
-      closingDate: appliedFields.closingDate ?? existingTarget?.closingDate,
-      allotmentDate: existingTarget?.allotmentDate,
-      listingDate: appliedFields.listingDate ?? existingTarget?.listingDate,
-      sellingShareholder: existingTarget?.sellingShareholder,
-      offerType: existingTarget?.offerType,
-      summary: existingTarget?.summary ?? params.review.detectedSummary,
-      officialDocuments: existingTarget?.officialDocuments ?? (params.review.sourceUrl ? [params.review.sourceUrl] : []),
-      sourceName: params.review.sourceName,
-      sourceUrl: params.review.sourceUrl ?? existingTarget?.sourceUrl,
-      verificationStatus: 'verified',
-      lastVerifiedAt: nowIso,
-      ...params.overrideUpdates,
-    };
-
-    await saveManagedIpoRecord(merged, !existingTarget);
-  }
-
-  await saveIpoSourceReview(
-    {
-      ...params.review,
+    const cleanRevUpdate = stripUndefined({
       reviewStatus: params.decision,
       reviewedByUid: user.uid,
       reviewedByEmail: user.email,
       reviewedAt: nowIso,
-    },
-    false,
-  );
+      updatedAt: serverTimestamp(),
+    });
+    tx.update(revRef, cleanRevUpdate);
+  });
 
   await writeAuditLog({
     action: params.decision === 'Approved' ? 'ipo_review_approve' : 'ipo_review_reject',
     entityType: 'ipoReview',
-    entityId: params.review.id,
+    entityId: safeReviewId,
     previousStatus: 'Needs Review',
     nextStatus: params.decision,
-    summary: `${params.decision} official IPO source review for ${params.review.companyName}`,
+    summary: `${params.decision} official SEBI source review for ${params.review.companyName}`,
   });
+}
+
+export interface SebiPortalStatusReport {
+  portalId: 'sebi';
+  portalName: string;
+  url: string;
+  status: 'reachable' | 'blocked' | 'unavailable' | 'structure_changed';
+  httpStatus?: number;
+  pagesChecked?: number;
+  totalRowsParsed?: number;
+  message: string;
+}
+
+export interface SebiCheckQueueResult {
+  checkedAt: string;
+  cached: boolean;
+  portals: SebiPortalStatusReport[];
+  policyNote: string;
+  candidatesCount: number;
+  queuedCount: number;
+  skippedDuplicateCount: number;
+}
+
+export async function runOfficialSebiSourceCheckAndQueue(params: {
+  forceRefresh?: boolean;
+  existingIpos: ManagedIpoRecord[];
+  existingReviews: IpoSourceReviewRecord[];
+}): Promise<SebiCheckQueueResult> {
+  const token = await auth.currentUser?.getIdToken(true);
+  if (!token) {
+    throw new Error('Authentication token unavailable. Refresh your session and try again.');
+  }
+
+  const res = await fetch('/api/ipo-sources/check', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ forceRefresh: Boolean(params.forceRefresh) }),
+  });
+
+  const body = (await res.json()) as {
+    checkedAt?: string;
+    cached?: boolean;
+    portals?: SebiPortalStatusReport[];
+    candidates?: DetectedIpoCandidate[];
+    policyNote?: string;
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(body.error || `Official SEBI check returned HTTP ${res.status}`);
+  }
+
+  const portals = body.portals ?? [];
+  const candidates = body.candidates ?? [];
+  const checkedAt = body.checkedAt || new Date().toISOString();
+
+  // Pull fresh authoritative Firestore state right before diffing/queuing to minimize cross-operator duplicates
+  const [freshIpos, freshReviews] = await Promise.all([
+    fetchAllManagedIpos().catch(() => params.existingIpos),
+    fetchIpoSourceReviews().catch(() => params.existingReviews),
+  ]);
+
+  let queuedCount = 0;
+  let skippedDuplicateCount = 0;
+  const workingReviews = [...freshReviews];
+
+  for (const cand of candidates) {
+    const existingIpo = findMatchingManagedIpo(freshIpos, cand.companyName);
+    const diffs = detectIpoFieldDiffs(existingIpo, cand);
+    if (diffs.length === 0) continue;
+
+    if (hasDuplicateIpoReview(workingReviews, cand.companyName, diffs)) {
+      skippedDuplicateCount++;
+      continue;
+    }
+
+    const revId = `rev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const nextReview: Omit<IpoSourceReviewRecord, 'createdByUid' | 'createdAt' | 'updatedAt'> = {
+      id: revId,
+      companyName: cand.companyName,
+      targetIpoId: existingIpo?.id,
+      segment: cand.segment,
+      reviewStatus: 'Needs Review',
+      sourceName: cand.sourceName,
+      sourceUrl: cand.sourceUrl,
+      checkedAt,
+      diffs,
+      detectedSummary: cand.summary,
+    };
+
+    await saveIpoSourceReview(nextReview, true);
+    workingReviews.push({ ...nextReview, createdByUid: auth.currentUser?.uid || '' });
+    queuedCount++;
+  }
+
+  const sebiStatus = portals[0]?.status ?? 'unavailable';
+  await writeAuditLog({
+    action: 'ipo_source_check',
+    entityType: 'ipoReview',
+    entityId: `chk_${Date.now()}`,
+    nextStatus: sebiStatus,
+    summary: `Checked Official SEBI Public Issues (${sebiStatus}): ${candidates.length} candidate(s), ${queuedCount} queued Needs Review, ${skippedDuplicateCount} duplicate(s) skipped.`,
+  });
+
+  return {
+    checkedAt,
+    cached: Boolean(body.cached),
+    portals,
+    policyNote: body.policyNote || '',
+    candidatesCount: candidates.length,
+    queuedCount,
+    skippedDuplicateCount,
+  };
 }
 
 // ─── OWNER-ONLY PERMISSIONS, SETTINGS & BACKUP / RESTORE ──────────────────────
@@ -1678,88 +2161,123 @@ export async function restoreBackupBundleToFirestore(
 
   for (const art of bundle.data.articles) {
     const safeId = safeDocId(art.id, 'art');
-    const clean = stripUndefined({
-      ...art,
-      id: undefined,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      createdByUid: art.createdByUid || user.uid,
-      updatedByUid: user.uid,
-      expiresAt:
-        typeof art.expiresAtMs === 'number' && Number.isFinite(art.expiresAtMs)
-          ? Timestamp.fromMillis(art.expiresAtMs)
-          : null,
-    });
-    await setDoc(doc(db, 'articles', safeId), clean, { merge: true });
+    const ref = doc(db, 'articles', safeId);
+    const existingSnap = await getDoc(ref);
+    const isExisting = existingSnap.exists();
+    const base = prepareRestoredArticlePayload(art, user.uid, isExisting);
+    const expiresAt =
+      typeof art.expiresAtMs === 'number' && Number.isFinite(art.expiresAtMs)
+        ? Timestamp.fromMillis(art.expiresAtMs)
+        : null;
+    if (isExisting) {
+      await updateDoc(ref, {
+        ...base,
+        expiresAt,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...base,
+        expiresAt,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
     restoredCount++;
   }
 
+  const mediaExpiryById = new Map<string, number | null>();
   for (const med of bundle.data.media) {
     const safeId = safeDocId(med.id, 'med');
-    const clean = stripUndefined({
-      ...med,
-      id: undefined,
-      uploadedByUid: med.uploadedByUid || user.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      expiresAt:
-        typeof med.expiresAtMs === 'number' && Number.isFinite(med.expiresAtMs)
-          ? Timestamp.fromMillis(med.expiresAtMs)
-          : null,
-    });
-    await setDoc(doc(db, 'media', safeId), clean, { merge: true });
+    const medExpiryMs =
+      typeof med.expiresAtMs === 'number' && Number.isFinite(med.expiresAtMs) ? med.expiresAtMs : null;
+    mediaExpiryById.set(safeId, medExpiryMs);
+    const ref = doc(db, 'media', safeId);
+    const existingSnap = await getDoc(ref);
+    const isExisting = existingSnap.exists();
+    const base = prepareRestoredMediaPayload(med, user.uid, isExisting);
+    const expiresAt = medExpiryMs !== null ? Timestamp.fromMillis(medExpiryMs) : null;
+    if (isExisting) {
+      await updateDoc(ref, {
+        ...base,
+        expiresAt,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...base,
+        expiresAt,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
     restoredCount++;
   }
 
   for (const pay of bundle.data.mediaPayloads) {
     const safeId = safeDocId(pay.mediaId || pay.id, 'med');
-    await setDoc(
-      doc(db, 'mediaPayloads', safeId),
-      {
-        mediaId: safeId,
-        mimeType: pay.mimeType,
-        sizeBytes: pay.sizeBytes,
-        dataUrl: pay.dataUrl,
-        isPublic: Boolean(pay.isPublic),
-        expiresAt: null,
-        uploadedByUid: pay.uploadedByUid || user.uid,
+    const matchingExpiryMs = mediaExpiryById.get(safeId) ?? null;
+    const ref = doc(db, 'mediaPayloads', safeId);
+    const existingSnap = await getDoc(ref);
+    const isExisting = existingSnap.exists();
+    const base = prepareRestoredMediaBlobPayload(pay, safeId, user.uid, isExisting);
+    const expiresAt = matchingExpiryMs !== null ? Timestamp.fromMillis(matchingExpiryMs) : null;
+    if (isExisting) {
+      await updateDoc(ref, {
+        ...base,
+        expiresAt,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...base,
+        expiresAt,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      },
-      { merge: true },
-    );
+      });
+    }
     restoredCount++;
   }
 
   for (const camp of bundle.data.paidCampaigns ?? []) {
     const safeId = safeDocId(camp.id, 'paid');
-    await setDoc(
-      doc(db, 'paidCampaigns', safeId),
-      stripUndefined({
-        ...camp,
-        id: undefined,
-        createdByUid: camp.createdByUid || user.uid,
+    const ref = doc(db, 'paidCampaigns', safeId);
+    const existingSnap = await getDoc(ref);
+    const isExisting = existingSnap.exists();
+    const base = prepareRestoredPaidCampaignPayload(camp, user.uid, isExisting);
+    if (isExisting) {
+      await updateDoc(ref, {
+        ...base,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...base,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      }),
-      { merge: true },
-    );
+      });
+    }
     restoredCount++;
   }
 
   for (const ipo of bundle.data.ipos ?? []) {
     const safeId = safeDocId(ipo.id, 'ipo');
-    await setDoc(
-      doc(db, 'ipos', safeId),
-      stripUndefined({
-        ...ipo,
-        id: undefined,
-        updatedByUid: user.uid,
+    const ref = doc(db, 'ipos', safeId);
+    const existingSnap = await getDoc(ref);
+    const isExisting = existingSnap.exists();
+    const base = prepareRestoredIpoPayload(ipo, user.uid);
+    if (isExisting) {
+      await updateDoc(ref, {
+        ...base,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(ref, {
+        ...base,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      }),
-      { merge: true },
-    );
+      });
+    }
     restoredCount++;
   }
 

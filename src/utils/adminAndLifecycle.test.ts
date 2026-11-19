@@ -9,15 +9,20 @@ import {
 import {
   applyManualFeaturedPlacement,
   applyMinorEditPreservingExpiry,
+  assertDocumentVersionUnchanged,
   canRetryPermanentDeletion,
+  ConflictError,
   computeExpiresAtMs,
   evaluateDeletionApproval,
   extendDurationFromNowOrExpiry,
+  extractReadableErrorMessage,
+  extractTimestampMillis,
   formatRemainingDuration,
   isArticleExpired,
   isArticleExpiringSoon,
   isArticlePubliclyVisible,
   resolveDurationHours,
+  sanitizeArticleSlug,
   selectHomepageFeaturedArticles,
   validateArticleDraftInput,
   validateArticlePublishInput,
@@ -29,11 +34,24 @@ import {
   parseYouTubeVideoUrl,
   validateCompressedImagePayload,
 } from './mediaLibrary.ts';
-import { buildSakarBazaarBackupBundle, validateBackupBundle } from './backupRestore.ts';
 import {
+  buildSakarBazaarBackupBundle,
+  prepareRestoredArticlePayload,
+  prepareRestoredIpoPayload,
+  prepareRestoredMediaBlobPayload,
+  prepareRestoredMediaPayload,
+  prepareRestoredPaidCampaignPayload,
+  validateBackupBundle,
+} from './backupRestore.ts';
+import {
+  assertReviewPendingResolution,
   calculateIpoStatusFromDates,
   detectIpoFieldDiffs,
+  findMatchingManagedIpo,
   formatOfficialIpoField,
+  hasDuplicateIpoReview,
+  mapManagedIpoToPublicRow,
+  normalizeIpoCompanyKey,
   normalizeToIsoDate,
 } from './ipoLifecycle.ts';
 import type { ArticleRecord, StoredArticleDoc } from '../types/sakarbazaar.ts';
@@ -382,7 +400,266 @@ test('IPO IST lifecycle calculation & official source diff detection', () => {
       sourceUrl: 'https://www.sebi.gov.in',
     },
   );
-  assert.equal(diffs.length, 2);
+  assert.equal(diffs.length, 3);
   assert.equal(diffs[0].field, 'priceBand');
   assert.equal(diffs[1].field, 'openingDate');
+  assert.equal(diffs[2].field, 'officialDocument');
 });
+
+test('Slug sanitization for Hindi-only titles, max-length validation, and Firestore JSON error unwrapping', () => {
+  const hiSlug = sanitizeArticleSlug('आरबीआई ने रेपो दर स्थिर रखी');
+  assert.match(hiSlug, /^[a-z0-9-]+$/);
+  assert.equal(hiSlug.length >= 3, true);
+  assert.equal(sanitizeArticleSlug('RBI Keeps Repo Rate Unchanged!'), 'rbi-keeps-repo-rate-unchanged');
+
+  const overlongHeadline = validateArticlePublishInput({
+    enHeadline: 'A'.repeat(261),
+    enBody: 'Detailed English article body exceeding twenty characters.',
+    hiHeadline: 'हिन्दी शीर्षक यहाँ है',
+    hiBody: 'यह एक पूर्ण हिन्दी समाचार लेख है जो बीस से अधिक अक्षरों का है।',
+    durationPreset: '15d',
+  });
+  assert.equal(overlongHeadline.valid, false);
+  assert.match(overlongHeadline.errors.join(' '), /260/);
+
+  const readable = extractReadableErrorMessage(
+    new Error(JSON.stringify({ error: 'Missing or insufficient permissions.', path: 'articles/abc' })),
+  );
+  assert.equal(readable, 'Missing or insufficient permissions. (articles/abc)');
+});
+
+test('SEBI IPO matching, duplicate review suppression, and filingDate separation', () => {
+  assert.equal(normalizeIpoCompanyKey('Acme India Limited'), 'acme india');
+  assert.equal(normalizeIpoCompanyKey('Acme India Ltd.'), 'acme india');
+
+  const existing = [{ id: 'acme-india-limited', companyName: 'Acme India Limited' }];
+  assert.equal(findMatchingManagedIpo(existing, 'ACME INDIA LTD')?.id, 'acme-india-limited');
+
+  const pendingReviews = [
+    {
+      companyName: 'Acme India Limited',
+      reviewStatus: 'Needs Review' as const,
+      diffs: [{ field: 'priceBand', label: 'Price Band', previousValue: 'Not announced', detectedValue: '₹100–₹110' }],
+    },
+  ];
+  assert.equal(
+    hasDuplicateIpoReview(pendingReviews, 'Acme India Ltd', [
+      { field: 'priceBand', label: 'Price Band', previousValue: 'Not announced', detectedValue: '₹100–₹110' },
+    ]),
+    true,
+  );
+
+  // Filing date must not be mapped into openDate or trigger Open status
+  const mapped = mapManagedIpoToPublicRow({
+    id: 'sebi-test-ipo',
+    companyName: 'Test Fintech Limited',
+    slug: 'test-fintech-limited',
+    segment: 'Mainboard',
+    status: 'Upcoming',
+    filingDate: '2026-11-18',
+    verificationStatus: 'verified',
+    updatedByUid: 'uid1',
+  });
+  assert.equal(mapped.filingDate, '2026-11-18');
+  assert.equal(mapped.openDate, null);
+  assert.equal(mapped.status, 'Upcoming');
+});
+
+test('Restore payload builders preserve immutable createdAt/creator UIDs on existing docs and strip unknown fields', () => {
+  const dirtyArticle = {
+    id: 'art-existing',
+    title: 'Restored Headline',
+    slug: 'restored-headline',
+    category: 'Markets',
+    author: 'Desk',
+    status: 'Published',
+    verificationStatus: 'verified',
+    language: 'bilingual',
+    createdByUid: 'original-uid',
+    createdAt: { seconds: 1700000000, nanoseconds: 0 },
+    updatedAt: { seconds: 1700000100, nanoseconds: 0 },
+    unexpectedExtraField: 'must-be-stripped',
+  } as unknown as StoredArticleDoc;
+
+  const updateArt = prepareRestoredArticlePayload(dirtyArticle, 'restorer-uid', true);
+  assert.equal('createdByUid' in updateArt, false);
+  assert.equal('createdAt' in updateArt, false);
+  assert.equal('updatedAt' in updateArt, false);
+  assert.equal('id' in updateArt, false);
+  assert.equal('unexpectedExtraField' in updateArt, false);
+  assert.equal(updateArt.updatedByUid, 'restorer-uid');
+
+  const createArt = prepareRestoredArticlePayload(dirtyArticle, 'restorer-uid', false);
+  assert.equal(createArt.createdByUid, 'restorer-uid');
+  assert.equal(createArt.updatedByUid, 'restorer-uid');
+
+  const mediaUpdate = prepareRestoredMediaPayload(
+    {
+      id: 'med-1',
+      fileName: 'photo.jpg',
+      mediaType: 'image/jpeg',
+      uploadedByUid: 'orig-uploader',
+      extraProp: 123,
+    } as never,
+    'restorer-uid',
+    true,
+  );
+  assert.equal('uploadedByUid' in mediaUpdate, false);
+  assert.equal('extraProp' in mediaUpdate, false);
+
+  const blobUpdate = prepareRestoredMediaBlobPayload(
+    {
+      id: 'med-1',
+      mediaId: 'med-1',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+      dataUrl: 'data:image/jpeg;base64,AAA',
+      isPublic: true,
+      uploadedByUid: 'orig-uploader',
+    },
+    'med-1',
+    'restorer-uid',
+    true,
+  );
+  assert.equal('uploadedByUid' in blobUpdate, false);
+  assert.equal(blobUpdate.mediaId, 'med-1');
+
+  const campaignUpdate = prepareRestoredPaidCampaignPayload(
+    {
+      id: 'camp-1',
+      clientName: 'Acme Corp',
+      internalStatus: 'Active',
+      disclosureEnabled: true,
+      createdByUid: 'orig-uid',
+      bogusField: true,
+    } as never,
+    'restorer-uid',
+    true,
+  );
+  assert.equal('createdByUid' in campaignUpdate, false);
+  assert.equal('bogusField' in campaignUpdate, false);
+
+  const ipoPayload = prepareRestoredIpoPayload(
+    {
+      id: 'ipo-1',
+      companyName: 'Acme India Limited',
+      slug: 'acme-india-limited',
+      segment: 'Mainboard',
+      status: 'Upcoming',
+      verificationStatus: 'verified',
+      updatedByUid: 'old-uid',
+      unknownIpoProp: 'drop-me',
+    } as never,
+    'restorer-uid',
+  );
+  assert.equal(ipoPayload.updatedByUid, 'restorer-uid');
+  assert.equal('unknownIpoProp' in ipoPayload, false);
+
+  // Detaching media from a published article flips orphaned media back to private
+  const futureExp = Date.now() + 86_400_000;
+  const beforeDetach = computeMediaVisibilityFromArticles(
+    'img-detached',
+    [{ id: 'art-1', mediaId: 'img-detached', status: 'Published', expiresAtMs: futureExp }],
+  );
+  assert.equal(beforeDetach.isPublic, true);
+
+  const afterDetach = computeMediaVisibilityFromArticles(
+    'img-detached',
+    [{ id: 'art-1', mediaId: '', status: 'Published', expiresAtMs: futureExp }],
+  );
+  assert.equal(afterDetach.isPublic, false);
+  assert.equal(afterDetach.associatedArticleIds.length, 0);
+
+  // Cross-operator restore of deleted media, mediaPayload, and paidCampaign assigns restorer-uid on create
+  const createMedia = prepareRestoredMediaPayload(
+    {
+      id: 'med-cross',
+      fileName: 'cross.jpg',
+      mediaType: 'image/jpeg',
+      uploadedByUid: 'publisher-uid',
+    } as never,
+    'owner-uid',
+    false,
+  );
+  assert.equal(createMedia.uploadedByUid, 'owner-uid');
+
+  const createBlob = prepareRestoredMediaBlobPayload(
+    {
+      id: 'med-cross',
+      mediaId: 'med-cross',
+      mimeType: 'image/jpeg',
+      sizeBytes: 100,
+      dataUrl: 'data:image/jpeg;base64,AAA',
+      isPublic: false,
+      uploadedByUid: 'publisher-uid',
+    },
+    'med-cross',
+    'owner-uid',
+    false,
+  );
+  assert.equal(createBlob.uploadedByUid, 'owner-uid');
+
+  const createCamp = prepareRestoredPaidCampaignPayload(
+    {
+      id: 'camp-cross',
+      clientName: 'Acme Corp',
+      internalStatus: 'Active',
+      disclosureEnabled: true,
+      createdByUid: 'publisher-uid',
+    } as never,
+    'owner-uid',
+    false,
+  );
+  assert.equal(createCamp.createdByUid, 'owner-uid');
+});
+
+test('Optimistic concurrency conflict guards and atomic IPO review resolution guard', () => {
+  const baseMs = 1_760_000_000_000;
+  assert.equal(extractTimestampMillis(baseMs), baseMs);
+  assert.equal(extractTimestampMillis({ seconds: 1760000000, nanoseconds: 250_000_000 }), 1_760_000_000_250);
+  assert.equal(extractTimestampMillis({ toMillis: () => baseMs + 500 }), baseMs + 500);
+  assert.equal(extractTimestampMillis(null), null);
+
+  // Same-second serverTimestamp jitter (<= 1000ms) passes cleanly
+  assert.doesNotThrow(() =>
+    assertDocumentVersionUnchanged({
+      entityLabel: 'article',
+      expectedUpdatedAtMs: baseMs,
+      currentUpdatedAt: { seconds: 1760000000, nanoseconds: 900_000_000 },
+    }),
+  );
+
+  // No baseline timestamp skips check cleanly (new/legacy records)
+  assert.doesNotThrow(() =>
+    assertDocumentVersionUnchanged({
+      entityLabel: 'article',
+      expectedUpdatedAtMs: undefined,
+      currentUpdatedAt: { seconds: 1760000010, nanoseconds: 0 },
+    }),
+  );
+
+  // Newer authoritative timestamp > 1000ms throws ConflictError preserving edits
+  assert.throws(
+    () =>
+      assertDocumentVersionUnchanged({
+        entityLabel: 'IPO dossier',
+        expectedUpdatedAtMs: baseMs,
+        currentUpdatedAt: baseMs + 5_000,
+      }),
+    (err: unknown) => err instanceof ConflictError && err.code === 'VERSION_CONFLICT',
+  );
+
+  // IPO review atomic guard allows only Needs Review
+  assert.doesNotThrow(() => assertReviewPendingResolution('Needs Review', 'Acme India Ltd'));
+  assert.throws(
+    () => assertReviewPendingResolution('Approved', 'Acme India Ltd'),
+    /already been resolved \(Approved\)/,
+  );
+  assert.throws(
+    () => assertReviewPendingResolution('Rejected', 'Acme India Ltd'),
+    /already been resolved \(Rejected\)/,
+  );
+});
+
+
+

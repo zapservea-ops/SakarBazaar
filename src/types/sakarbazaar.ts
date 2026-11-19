@@ -236,6 +236,7 @@ export interface IpoRow {
   issueSize: string | null;
   upperBandValuation?: string | null;
   priceBand: string | null;
+  filingDate?: string | null;
   openDate: string | null;
   closeDate: string | null;
   allotmentDate: string | null;

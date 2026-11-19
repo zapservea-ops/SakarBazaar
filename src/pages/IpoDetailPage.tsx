@@ -69,19 +69,19 @@ export function IpoDetailPage() {
 
       <div className="sumgrid">
         <div className="card sum">
-          <b>{ipo.issueSize ?? 'Not disclosed'}</b>
+          <b>{ipo.issueSize ?? 'Not announced'}</b>
           <span>{ui.tableIssueSize}</span>
         </div>
         <div className="card sum">
-          <b>{ipo.priceBand ?? 'Not disclosed'}</b>
+          <b>{ipo.priceBand ?? 'Not announced'}</b>
           <span>{ui.tablePriceBand}</span>
         </div>
         <div className="card sum">
-          <b>{ipo.upperBandValuation ?? 'Not disclosed'}</b>
+          <b>{ipo.upperBandValuation ?? 'Not announced'}</b>
           <span>Upper-band implied valuation</span>
         </div>
         <div className="card sum">
-          <b>{ipo.offerType ?? 'Not disclosed'}</b>
+          <b>{ipo.offerType ?? 'Not announced'}</b>
           <span>{ui.tableOfferType}</span>
         </div>
       </div>
@@ -151,40 +151,47 @@ export function IpoDetailPage() {
             </div>
             <div className="row sb-snap-row">
               <span>Selling shareholder</span>
-              <span style={{ textAlign: 'right' }}>{ipo.sellingShareholder ?? 'TBD'}</span>
+              <span style={{ textAlign: 'right' }}>{ipo.sellingShareholder ?? 'Not announced'}</span>
             </div>
             <div className="row sb-snap-row">
               <span>Shares offered</span>
               <span className="num" style={{ textAlign: 'right' }}>
-                {ipo.sharesOffered ?? 'TBD'} ({ipo.stakePercent ?? '–'})
+                {ipo.sharesOffered ?? 'Not announced'}
+                {ipo.stakePercent ? ` (${ipo.stakePercent})` : ''}
               </span>
             </div>
             <div className="row sb-snap-row">
               <span>Proceeds recipient</span>
-              <span style={{ textAlign: 'right' }}>{ipo.proceedsRecipient ?? 'TBD'}</span>
+              <span style={{ textAlign: 'right' }}>{ipo.proceedsRecipient ?? 'Not announced'}</span>
+            </div>
+            <div className="row sb-snap-row">
+              <span>SEBI filing date</span>
+              <span className="num" style={{ textAlign: 'right' }}>
+                {ipo.filingDate ?? 'Not announced'}
+              </span>
             </div>
             <div className="row sb-snap-row">
               <span>Proposed open date</span>
               <span className="num" style={{ textAlign: 'right' }}>
-                {ipo.openDate ?? 'Pending official notice'}
+                {ipo.openDate ?? 'Not announced'}
               </span>
             </div>
             <div className="row sb-snap-row">
               <span>Proposed close date</span>
               <span className="num" style={{ textAlign: 'right' }}>
-                {ipo.closeDate ?? 'Pending official notice'}
+                {ipo.closeDate ?? 'Not announced'}
               </span>
             </div>
             <div className="row sb-snap-row">
               <span>Allotment date</span>
               <span className="num" style={{ textAlign: 'right' }}>
-                {ipo.allotmentDate ?? 'Pending official RHP'}
+                {ipo.allotmentDate ?? 'Not announced'}
               </span>
             </div>
             <div className="row sb-snap-row">
               <span>Listing date</span>
               <span className="num" style={{ textAlign: 'right' }}>
-                {ipo.listingDate ?? 'Pending exchange notice'}
+                {ipo.listingDate ?? 'Not announced'}
               </span>
             </div>
           </section>
@@ -202,10 +209,10 @@ export function IpoDetailPage() {
           <div className="sb-xray-panel">
             <h4>1. Issue Structure (Fresh vs OFS)</h4>
             <div style={{ fontSize: '13px', lineHeight: '1.6' }}>
-              <div><strong>Offer Type:</strong> {ipo.offerType ?? 'Not confirmed'}</div>
-              <div><strong>Selling Shareholder:</strong> {ipo.sellingShareholder ?? 'Not confirmed'}</div>
-              <div><strong>Shares Offered:</strong> {ipo.sharesOffered ?? 'TBD'} ({ipo.stakePercent ?? '–'})</div>
-              <div><strong>Proceeds Recipient:</strong> {ipo.proceedsRecipient ?? 'TBD'}</div>
+              <div><strong>Offer Type:</strong> {ipo.offerType ?? 'Not announced'}</div>
+              <div><strong>Selling Shareholder:</strong> {ipo.sellingShareholder ?? 'Not announced'}</div>
+              <div><strong>Shares Offered:</strong> {ipo.sharesOffered ?? 'Not announced'}{ipo.stakePercent ? ` (${ipo.stakePercent})` : ''}</div>
+              <div><strong>Proceeds Recipient:</strong> {ipo.proceedsRecipient ?? 'Not announced'}</div>
               <p style={{ margin: '8px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
                 {ipo.offerType?.toLowerCase().includes('ofs') || ipo.proceedsRecipient?.toLowerCase().includes('parent')
                   ? 'Note: 100% OFS implies the issuing entity receives zero fresh growth capital from issue proceeds.'
@@ -293,7 +300,7 @@ export function IpoDetailPage() {
                   {ipo.priceBand ? '✓' : '⏳'}
                 </span>
                 <span>
-                  <strong>Price Band &amp; Lot Size:</strong> {ipo.priceBand ? `${ipo.priceBand} (Subject to exchange notice)` : 'To be confirmed in RHP filing'}
+                  <strong>Price Band &amp; Lot Size:</strong> {ipo.priceBand ? `${ipo.priceBand} (Subject to official notice)` : 'Not announced'}
                 </span>
               </li>
               <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -301,7 +308,7 @@ export function IpoDetailPage() {
                   {ipo.openDate ? '✓' : '⏳'}
                 </span>
                 <span>
-                  <strong>Exchange In-Principle Approval:</strong> {ipo.openDate ? `Proposed session window: ${ipo.openDate} to ${ipo.closeDate}` : 'Pending NSE/BSE listing approval circular'}
+                  <strong>Issue Schedule Window:</strong> {ipo.openDate ? `Proposed session window: ${ipo.openDate} to ${ipo.closeDate ?? 'Not announced'}` : 'Not announced (distinct from SEBI filing date)'}
                 </span>
               </li>
               <li style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -309,7 +316,7 @@ export function IpoDetailPage() {
                   {ipo.sellingShareholder ? '✓' : '⏳'}
                 </span>
                 <span>
-                  <strong>Object of Offer / Shareholder Mandate:</strong> {ipo.sellingShareholder ? `Selling shareholder confirmed: ${ipo.sellingShareholder}` : 'Pending disclosure'}
+                  <strong>Object of Offer / Shareholder Mandate:</strong> {ipo.sellingShareholder ? `Selling shareholder confirmed: ${ipo.sellingShareholder}` : 'Not announced'}
                 </span>
               </li>
             </ul>

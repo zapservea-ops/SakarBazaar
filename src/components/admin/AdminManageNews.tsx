@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   approveArticleForPermanentDeletion,
   saveEditorialArticle,
@@ -7,6 +7,8 @@ import {
 import type { StoredArticleDoc } from '../../types/sakarbazaar';
 import {
   extendDurationFromNowOrExpiry,
+  extractReadableErrorMessage,
+  extractTimestampMillis,
   formatRemainingDuration,
   isArticleExpired,
   isArticlePubliclyVisible,
@@ -29,6 +31,7 @@ export function AdminManageNews({
   const [filterMode, setFilterMode] = useState<'active' | 'drafts' | 'all'>('active');
   const [customHoursById, setCustomHoursById] = useState<Record<string, number>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const busyIdsRef = useRef<Set<string>>(new Set());
 
   const nowMs = Date.now();
   const visibleRows = data.articles.filter((art) => {
@@ -54,19 +57,35 @@ export function AdminManageNews({
   });
 
   async function handleExtend(art: StoredArticleDoc, additionalHours: number) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
+    const safeAdditionalHours = Math.max(1, Math.min(43800, Math.round(Number(additionalHours) || 24)));
     setBusyId(art.id);
     try {
-      const nextExpiry = extendDurationFromNowOrExpiry(art.expiresAtMs, additionalHours, Date.now());
+      const now = Date.now();
+      const nextExpiry = extendDurationFromNowOrExpiry(art.expiresAtMs, safeAdditionalHours, now);
+      const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
+        expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
         action: 'extend_duration',
         payload: {
-          ...art,
+          ...cleanArt,
           status: 'Published',
+          verificationStatus: 'verified',
+          retainedPrivate: false,
+          publishedAtMs: art.publishedAtMs ?? now,
+          publishedAt:
+            art.publishedAt ||
+            new Date(now).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            }),
           expiresAtMs: nextExpiry,
-          durationHours: (art.durationHours ?? 0) + additionalHours,
+          durationHours: (art.durationHours ?? 0) + safeAdditionalHours,
         },
       });
       if (art.mediaId) {
@@ -79,28 +98,33 @@ export function AdminManageNews({
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
-        text: `Extended "${art.enHeadline || art.title}" by ${additionalHours} hours.`,
+        text: `Extended "${art.enHeadline || art.title}" by ${safeAdditionalHours} hours.`,
       });
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to extend duration.',
+        text: extractReadableErrorMessage(err, 'Unable to extend duration.'),
       });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }
 
   async function handleRetainPrivate(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
+      const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
+        expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
         action: 'retain_private',
         payload: {
-          ...art,
+          ...cleanArt,
           status: 'Retained',
           retainedPrivate: true,
         },
@@ -120,14 +144,17 @@ export function AdminManageNews({
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to unpublish article.',
+        text: extractReadableErrorMessage(err, 'Unable to unpublish article.'),
       });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }
 
   async function handleApproveDelete(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
       await approveArticleForPermanentDeletion(art);
@@ -146,9 +173,10 @@ export function AdminManageNews({
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to move to pending deletion.',
+        text: extractReadableErrorMessage(err, 'Unable to move to pending deletion.'),
       });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }

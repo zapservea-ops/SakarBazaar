@@ -102,9 +102,68 @@ export interface DetectedIpoCandidate {
   openingDate?: string;
   closingDate?: string;
   listingDate?: string;
+  documentType?: string;
+  documentUrl?: string;
+  officialDocuments?: string[];
   sourceName: string;
   sourceUrl: string;
   summary?: string;
+}
+
+export function normalizeIpoCompanyKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\b(limited|ltd\.?|private|pvt\.?)\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+export function findMatchingManagedIpo<T extends { id?: string; companyName: string }>(
+  ipos: T[],
+  companyName: string,
+): T | undefined {
+  const exactLower = companyName.trim().toLowerCase();
+  const exact = ipos.find((i) => i.companyName.trim().toLowerCase() === exactLower);
+  if (exact) return exact;
+  const targetKey = normalizeIpoCompanyKey(companyName);
+  if (!targetKey || targetKey.length < 3) return undefined;
+  return ipos.find((i) => normalizeIpoCompanyKey(i.companyName) === targetKey);
+}
+
+export function computeDiffFingerprint(diffs: IpoSourceDiffItem[]): string {
+  return diffs
+    .map((d) => `${d.field}=${d.detectedValue}`)
+    .sort()
+    .join('|');
+}
+
+export function hasDuplicateIpoReview(
+  existingReviews: Array<{
+    companyName: string;
+    reviewStatus: 'Needs Review' | 'Approved' | 'Rejected';
+    diffs?: IpoSourceDiffItem[];
+  }>,
+  companyName: string,
+  candidateDiffs: IpoSourceDiffItem[],
+): boolean {
+  const candKey = normalizeIpoCompanyKey(companyName);
+  const candExact = companyName.trim().toLowerCase();
+  const candSig = computeDiffFingerprint(candidateDiffs);
+
+  for (const rev of existingReviews) {
+    const revExact = rev.companyName.trim().toLowerCase();
+    const revKey = normalizeIpoCompanyKey(rev.companyName);
+    const sameCompany = revExact === candExact || (candKey.length >= 3 && revKey === candKey);
+    if (!sameCompany) continue;
+
+    if (rev.reviewStatus === 'Needs Review') {
+      return true;
+    }
+    if (candSig && computeDiffFingerprint(rev.diffs ?? []) === candSig) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function detectIpoFieldDiffs(
@@ -135,6 +194,31 @@ export function detectIpoFieldDiffs(
       });
     }
   }
+
+  // Also record newly detected official SEBI document/filing link when not yet linked on existing record
+  const candidateDocs = [
+    ...(candidate.officialDocuments ?? []),
+    candidate.documentUrl ?? '',
+    candidate.sourceUrl ?? '',
+  ]
+    .map((u) => u.trim())
+    .filter((u) => /^https?:\/\//i.test(u));
+  const uniqueCandidateDocs = [...new Set(candidateDocs)];
+  const existingDocs = new Set(
+    [...(existing?.officialDocuments ?? []), existing?.sourceUrl ?? '']
+      .map((u) => u.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const newOfficialDoc = uniqueCandidateDocs.find((u) => !existingDocs.has(u.toLowerCase()));
+  if (newOfficialDoc && (!existing || diffs.length > 0 || existingDocs.size === 0)) {
+    diffs.push({
+      field: 'officialDocument',
+      label: candidate.documentType ? `Official SEBI ${candidate.documentType}` : 'Official SEBI Document',
+      previousValue: existing?.sourceUrl?.trim() || 'Not announced',
+      detectedValue: newOfficialDoc,
+    });
+  }
+
   return diffs;
 }
 
@@ -159,6 +243,7 @@ export function mapManagedIpoToPublicRow(doc: ManagedIpoRecord): IpoRow {
     exchange: doc.segment === 'Mainboard' ? 'NSE / BSE' : 'NSE Emerge / BSE SME',
     issueSize: doc.issueSize?.trim() || null,
     priceBand: doc.priceBand?.trim() || null,
+    filingDate: doc.filingDate?.trim() || null,
     openDate: doc.openingDate?.trim() || null,
     closeDate: doc.closingDate?.trim() || null,
     allotmentDate: doc.allotmentDate?.trim() || null,
@@ -183,3 +268,16 @@ export function mapManagedIpoToPublicRow(doc: ManagedIpoRecord): IpoRow {
     lastVerifiedAt: doc.lastVerifiedAt ?? null,
   };
 }
+
+export function assertReviewPendingResolution(
+  reviewStatus: string | undefined,
+  companyName?: string,
+): void {
+  if (reviewStatus !== 'Needs Review') {
+    const label = companyName ? ` for ${companyName}` : '';
+    throw new Error(
+      `This official SEBI review${label} has already been resolved (${reviewStatus || 'unknown'}). Refresh Data to view the updated status.`,
+    );
+  }
+}
+

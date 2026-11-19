@@ -17,6 +17,7 @@ import { MarketsPage } from './pages/MarketsPage';
 import { NewsListPage } from './pages/NewsListPage';
 import { SearchPage } from './pages/SearchPage';
 import { SupportingPage } from './pages/SupportingPage';
+import { WatchlistPage } from './pages/WatchlistPage';
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
               <Route path="/news/:category" element={<NewsListPage />} />
               <Route path="/article/:slug" element={<ArticleDetailPage />} />
               <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/watchlist" element={<WatchlistPage />} />
               <Route path="/explainers" element={<ExplainersPage />} />
               <Route path="/explainers/:slug" element={<ExplainerDetailPage />} />
               <Route path="/search" element={<SearchPage />} />

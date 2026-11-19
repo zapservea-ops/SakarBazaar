@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   approveArticleForPermanentDeletion,
   saveEditorialArticle,
@@ -7,6 +7,8 @@ import {
 import type { DurationPreset, StoredArticleDoc } from '../../types/sakarbazaar';
 import {
   computeExpiresAtMs,
+  extractReadableErrorMessage,
+  extractTimestampMillis,
   isArticleExpired,
   resolveDurationHours,
 } from '../../utils/newsLifecycle';
@@ -24,6 +26,7 @@ export function AdminExpiredArchive({
 }: AdminExpiredArchiveProps) {
   const [restorePresetById, setRestorePresetById] = useState<Record<string, DurationPreset>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const busyIdsRef = useRef<Set<string>>(new Set());
   const nowMs = Date.now();
 
   const expiredItems = data.articles.filter(
@@ -38,44 +41,61 @@ export function AdminExpiredArchive({
   );
 
   async function handleRetain(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
+      const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
+        expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
         action: 'retain_private',
         payload: {
-          ...art,
+          ...cleanArt,
           status: 'Retained',
           retainedPrivate: true,
         },
       });
+      if (art.mediaId) {
+        const updated = data.articles.map((a) =>
+          a.id === art.id ? { ...a, status: 'Retained' as const } : a,
+        );
+        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+      }
       await onRefresh();
+      await onPublicContentChanged();
       onNotify({ tone: 'ok', text: `Marked "${art.enHeadline || art.title}" as Retained Privately.` });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Unable to retain article.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Unable to retain article.') });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }
 
   async function handleRestore(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
       const preset = restorePresetById[art.id] ?? '15d';
       const hours = resolveDurationHours(preset);
       const publishedMs = Date.now();
       const nextExpiry = computeExpiresAtMs(publishedMs, hours);
+      const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
 
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
+        expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
         action: 'restore_article',
         payload: {
-          ...art,
+          ...cleanArt,
           status: 'Published',
+          verificationStatus: 'verified',
           retainedPrivate: false,
           durationPreset: preset,
           durationHours: hours,
@@ -103,24 +123,35 @@ export function AdminExpiredArchive({
         text: `Restored and republished "${art.enHeadline || art.title}" for ${hours} hours.`,
       });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Unable to restore article.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Unable to restore article.') });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }
 
   async function handleApproveDelete(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
       await approveArticleForPermanentDeletion(art);
+      if (art.mediaId) {
+        const updated = data.articles.map((a) =>
+          a.id === art.id ? { ...a, status: 'Pending Deletion' as const, deletionStatus: 'approved' as const } : a,
+        );
+        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+      }
       await onRefresh();
+      await onPublicContentChanged();
       onNotify({
         tone: 'ok',
         text: `Approved "${art.enHeadline || art.title}" for Pending Deletion.`,
       });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Unable to approve deletion.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Unable to approve deletion.') });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }

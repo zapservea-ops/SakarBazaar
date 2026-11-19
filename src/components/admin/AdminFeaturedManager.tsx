@@ -1,7 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { updateFeaturedPlacementsInFirestore } from '../../lib/firebase';
 import type { FeaturedPlacement } from '../../types/sakarbazaar';
-import { applyManualFeaturedPlacement, isArticlePubliclyVisible } from '../../utils/newsLifecycle';
+import {
+  applyManualFeaturedPlacement,
+  extractReadableErrorMessage,
+  isArticlePubliclyVisible,
+} from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 interface AdminFeaturedManagerProps extends AdminSectionBaseProps {
@@ -15,6 +19,7 @@ export function AdminFeaturedManager({
   onNotify,
 }: AdminFeaturedManagerProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const activeArticles = data.articles.filter((a) => isArticlePubliclyVisible(a));
 
   const mainStory = activeArticles.find((a) => a.featuredPlacement === 'main');
@@ -23,6 +28,8 @@ export function AdminFeaturedManager({
     .sort((a, b) => (a.featuredOrder ?? 99) - (b.featuredOrder ?? 99));
 
   async function handleAssign(articleId: string, placement: FeaturedPlacement, order: number = 1) {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusyId(articleId);
     try {
       const changes = applyManualFeaturedPlacement(data.articles, articleId, placement, order);
@@ -36,9 +43,10 @@ export function AdminFeaturedManager({
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to update featured placement.',
+        text: extractReadableErrorMessage(err, 'Unable to update featured placement.'),
       });
     } finally {
+      busyRef.current = false;
       setBusyId(null);
     }
   }

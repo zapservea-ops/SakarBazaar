@@ -159,6 +159,30 @@ export function isValidOptionalHttpUrl(rawUrl: string | undefined | null): boole
   }
 }
 
+export const ARTICLE_FIELD_LIMITS = {
+  headlineMax: 260,
+  summaryMax: 1200,
+  bodyMax: 25000,
+  sourceNameMax: 160,
+  sourceUrlMax: 500,
+} as const;
+
+export function sanitizeArticleSlug(rawTitle: string, fallbackPrefix: string = 'dispatch'): string {
+  const ascii = rawTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 140);
+  if (ascii.length >= 3) {
+    return ascii;
+  }
+  const safePrefix = fallbackPrefix
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'dispatch';
+  return `${safePrefix}-${Date.now().toString(36)}`.slice(0, 140);
+}
+
 /**
  * Drafts may be incomplete (either EN or HI headline >= 3 chars).
  * Source name and source URL are strictly optional.
@@ -171,13 +195,37 @@ export function validateArticleDraftInput(input: BilingualArticleDraftInput): Va
   if (!hasEn && !hasHi) {
     errors.push('Enter at least an English or Hindi working headline (3+ characters) to save a draft.');
   }
+  if (input.enHeadline.trim().length > ARTICLE_FIELD_LIMITS.headlineMax) {
+    errors.push(`English headline cannot exceed ${ARTICLE_FIELD_LIMITS.headlineMax} characters.`);
+  }
+  if (input.hiHeadline.trim().length > ARTICLE_FIELD_LIMITS.headlineMax) {
+    errors.push(`Hindi headline cannot exceed ${ARTICLE_FIELD_LIMITS.headlineMax} characters.`);
+  }
+  if ((input.enSummary ?? '').trim().length > ARTICLE_FIELD_LIMITS.summaryMax) {
+    errors.push(`English summary cannot exceed ${ARTICLE_FIELD_LIMITS.summaryMax} characters.`);
+  }
+  if ((input.hiSummary ?? '').trim().length > ARTICLE_FIELD_LIMITS.summaryMax) {
+    errors.push(`Hindi summary cannot exceed ${ARTICLE_FIELD_LIMITS.summaryMax} characters.`);
+  }
+  if (input.enBody.trim().length > ARTICLE_FIELD_LIMITS.bodyMax) {
+    errors.push(`English body cannot exceed ${ARTICLE_FIELD_LIMITS.bodyMax} characters.`);
+  }
+  if (input.hiBody.trim().length > ARTICLE_FIELD_LIMITS.bodyMax) {
+    errors.push(`Hindi body cannot exceed ${ARTICLE_FIELD_LIMITS.bodyMax} characters.`);
+  }
+  if ((input.sourceName ?? '').trim().length > ARTICLE_FIELD_LIMITS.sourceNameMax) {
+    errors.push(`News Source Name cannot exceed ${ARTICLE_FIELD_LIMITS.sourceNameMax} characters.`);
+  }
+  if ((input.sourceUrl ?? '').trim().length > ARTICLE_FIELD_LIMITS.sourceUrlMax) {
+    errors.push(`News Source URL cannot exceed ${ARTICLE_FIELD_LIMITS.sourceUrlMax} characters.`);
+  }
   if (!isValidOptionalHttpUrl(input.sourceUrl)) {
     errors.push('Optional Source URL must begin with http:// or https:// when provided.');
   }
   if (input.durationPreset === 'custom') {
     const hours = Number(input.customHours);
-    if (!Number.isFinite(hours) || hours < 1) {
-      errors.push('Custom duration must be at least 1 hour.');
+    if (!Number.isFinite(hours) || hours < 1 || hours > 43800) {
+      errors.push('Custom duration must be between 1 and 43,800 hours.');
     }
   }
   return { valid: errors.length === 0, errors };
@@ -191,23 +239,43 @@ export function validateArticlePublishInput(input: BilingualArticleDraftInput): 
   const errors: string[] = [];
   if (input.enHeadline.trim().length < 5) {
     errors.push('English headline (5+ characters) is required before publishing.');
+  } else if (input.enHeadline.trim().length > ARTICLE_FIELD_LIMITS.headlineMax) {
+    errors.push(`English headline cannot exceed ${ARTICLE_FIELD_LIMITS.headlineMax} characters.`);
+  }
+  if ((input.enSummary ?? '').trim().length > ARTICLE_FIELD_LIMITS.summaryMax) {
+    errors.push(`English summary cannot exceed ${ARTICLE_FIELD_LIMITS.summaryMax} characters.`);
   }
   if (input.enBody.trim().length < 20) {
     errors.push('English article body (20+ characters) is required before publishing.');
+  } else if (input.enBody.trim().length > ARTICLE_FIELD_LIMITS.bodyMax) {
+    errors.push(`English body cannot exceed ${ARTICLE_FIELD_LIMITS.bodyMax} characters.`);
   }
   if (input.hiHeadline.trim().length < 5) {
     errors.push('Hindi headline (5+ characters) is required before publishing.');
+  } else if (input.hiHeadline.trim().length > ARTICLE_FIELD_LIMITS.headlineMax) {
+    errors.push(`Hindi headline cannot exceed ${ARTICLE_FIELD_LIMITS.headlineMax} characters.`);
+  }
+  if ((input.hiSummary ?? '').trim().length > ARTICLE_FIELD_LIMITS.summaryMax) {
+    errors.push(`Hindi summary cannot exceed ${ARTICLE_FIELD_LIMITS.summaryMax} characters.`);
   }
   if (input.hiBody.trim().length < 20) {
     errors.push('Hindi article body (20+ characters) is required before publishing.');
+  } else if (input.hiBody.trim().length > ARTICLE_FIELD_LIMITS.bodyMax) {
+    errors.push(`Hindi body cannot exceed ${ARTICLE_FIELD_LIMITS.bodyMax} characters.`);
+  }
+  if ((input.sourceName ?? '').trim().length > ARTICLE_FIELD_LIMITS.sourceNameMax) {
+    errors.push(`News Source Name cannot exceed ${ARTICLE_FIELD_LIMITS.sourceNameMax} characters.`);
+  }
+  if ((input.sourceUrl ?? '').trim().length > ARTICLE_FIELD_LIMITS.sourceUrlMax) {
+    errors.push(`News Source URL cannot exceed ${ARTICLE_FIELD_LIMITS.sourceUrlMax} characters.`);
   }
   if (!isValidOptionalHttpUrl(input.sourceUrl)) {
     errors.push('Optional Source URL must begin with http:// or https:// when provided.');
   }
   if (input.durationPreset === 'custom') {
     const hours = Number(input.customHours);
-    if (!Number.isFinite(hours) || hours < 1) {
-      errors.push('Custom duration must be at least 1 hour.');
+    if (!Number.isFinite(hours) || hours < 1 || hours > 43800) {
+      errors.push('Custom duration must be between 1 and 43,800 hours.');
     }
   }
   return { valid: errors.length === 0, errors };
@@ -363,3 +431,70 @@ export function canRetryPermanentDeletion(
     article.status === 'Deletion In Progress'
   );
 }
+
+export function extractReadableErrorMessage(err: unknown, fallback: string = 'Operation failed.'): string {
+  const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  if (!raw.trim()) return fallback;
+  if (raw.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown; path?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        const pathLabel = typeof parsed.path === 'string' && parsed.path.trim() ? ` (${parsed.path})` : '';
+        return `${parsed.error}${pathLabel}`;
+      }
+    } catch {
+      // Fall back to raw message
+    }
+  }
+  return raw;
+}
+
+export class ConflictError extends Error {
+  readonly code = 'VERSION_CONFLICT';
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
+
+export function extractTimestampMillis(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    const maybe = value as { toMillis?: () => number; seconds?: number; nanoseconds?: number };
+    if (typeof maybe.toMillis === 'function') {
+      const ms = maybe.toMillis();
+      return Number.isFinite(ms) ? ms : null;
+    }
+    if (typeof maybe.seconds === 'number' && Number.isFinite(maybe.seconds)) {
+      const nanoMs = typeof maybe.nanoseconds === 'number' ? Math.floor(maybe.nanoseconds / 1_000_000) : 0;
+      return maybe.seconds * 1000 + nanoMs;
+    }
+  }
+  return null;
+}
+
+/**
+ * Throws ConflictError when an authoritative Firestore record has a newer timestamp
+ * than the operator's loaded baseline (with a 1,000 ms clock tolerance for same-second serverTimestamp jitter).
+ */
+export function assertDocumentVersionUnchanged(params: {
+  entityLabel: string;
+  expectedUpdatedAtMs?: number | null;
+  currentUpdatedAt: unknown;
+  toleranceMs?: number;
+}): void {
+  const { entityLabel, expectedUpdatedAtMs, currentUpdatedAt, toleranceMs = 1_000 } = params;
+  if (typeof expectedUpdatedAtMs !== 'number' || !Number.isFinite(expectedUpdatedAtMs) || expectedUpdatedAtMs <= 0) {
+    return;
+  }
+  const latestMs = extractTimestampMillis(currentUpdatedAt);
+  if (latestMs !== null && latestMs > expectedUpdatedAtMs + toleranceMs) {
+    throw new ConflictError(
+      `Conflict detected: This ${entityLabel} was modified by another editor or session after you opened it. Your form edits are preserved—please click Refresh Data to inspect the latest version before saving again.`,
+    );
+  }
+}
+
+

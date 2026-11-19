@@ -52,7 +52,7 @@ export function CalendarPage() {
       companyName: rec.company,
       documentType: rec.openDate ? 'RHP' : 'DRHP',
       category: rec.segment,
-      filingDate: rec.openDate ? 'Confirmed Schedule' : 'Not announced',
+      filingDate: rec.filingDate ?? 'Not announced',
       issueSize: rec.issueSize ?? undefined,
       priceBand: rec.priceBand ?? null,
       openDate: rec.openDate ?? null,
@@ -251,8 +251,8 @@ export function CalendarPage() {
                           </div>
                         ) : (
                           <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
-                            Pending official RHP registration
-                            <div className="meta" style={{ fontSize: '11px' }}>Filing under review</div>
+                            Not announced
+                            <div className="meta" style={{ fontSize: '11px' }}>Filing under SEBI review</div>
                           </div>
                         )}
                       </td>
@@ -260,7 +260,7 @@ export function CalendarPage() {
                         {filing.priceBand ? (
                           <strong>{filing.priceBand}</strong>
                         ) : (
-                          <span style={{ color: 'var(--muted)' }}>To be announced</span>
+                          <span style={{ color: 'var(--muted)' }}>Not announced</span>
                         )}
                       </td>
                       <td className="n">
@@ -296,11 +296,11 @@ export function CalendarPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', borderTop: '1px solid var(--border)', paddingTop: '8px', marginBottom: '10px' }}>
                     <div>
                       <span style={{ color: 'var(--muted)' }}>Issue Dates: </span>
-                      <strong>{filing.openDate ? `${filing.openDate} – ${filing.closeDate}` : 'Pending RHP'}</strong>
+                      <strong>{filing.openDate ? `${filing.openDate} – ${filing.closeDate ?? 'Not announced'}` : 'Not announced'}</strong>
                     </div>
                     <div>
                       <span style={{ color: 'var(--muted)' }}>Price Band: </span>
-                      <strong>{filing.priceBand ?? 'To be announced'}</strong>
+                      <strong>{filing.priceBand ?? 'Not announced'}</strong>
                     </div>
                   </div>
                   <a

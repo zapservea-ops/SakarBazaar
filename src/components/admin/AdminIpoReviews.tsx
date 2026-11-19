@@ -1,39 +1,20 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
-  auth,
   resolveIpoSourceReview,
-  saveIpoSourceReview,
-  writeAuditLog,
+  runOfficialSebiSourceCheckAndQueue,
+  type SebiPortalStatusReport,
 } from '../../lib/firebase';
 import type { IpoSourceReviewRecord } from '../../types/sakarbazaar';
-import { detectIpoFieldDiffs } from '../../utils/ipoLifecycle';
+import { formatOfficialIpoField } from '../../utils/ipoLifecycle';
+import { extractReadableErrorMessage } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
-
-interface PortalStatus {
-  portalId: string;
-  portalName: string;
-  url: string;
-  status: 'reachable' | 'blocked' | 'unavailable';
-  httpStatus?: number;
-  message: string;
-}
-
-interface CandidateItem {
-  companyName: string;
-  segment: 'Mainboard' | 'SME';
-  filingDate?: string;
-  openingDate?: string;
-  closingDate?: string;
-  priceBand?: string;
-  issueSize?: string;
-  sourceName: string;
-  sourceUrl: string;
-  summary: string;
-}
 
 interface AdminIpoReviewsProps extends AdminSectionBaseProps {
   onPublicContentChanged: () => Promise<void>;
 }
+
+const OFFICIAL_SEBI_URL =
+  'https://www.sebi.gov.in/sebiweb/home/HomeAction.do?doListing=yes&sid=3&ssid=15&smid=11';
 
 export function AdminIpoReviews({
   data,
@@ -42,92 +23,46 @@ export function AdminIpoReviews({
   onNotify,
 }: AdminIpoReviewsProps) {
   const [checking, setChecking] = useState(false);
-  const [portals, setPortals] = useState<PortalStatus[]>([]);
+  const [portals, setPortals] = useState<SebiPortalStatusReport[]>([]);
   const [policyNote, setPolicyNote] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const checkingRef = useRef(false);
+  const resolvingIdsRef = useRef<Set<string>>(new Set());
 
-  async function handleCheckOfficialSources(forceRefresh: boolean = false) {
+  async function handleCheckOfficialSebiSource(forceRefresh: boolean = false) {
+    if (checkingRef.current || checking) return;
+    checkingRef.current = true;
     setChecking(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Authentication token unavailable.');
-
-      const res = await fetch('/api/ipo-sources/check', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ forceRefresh }),
+      const report = await runOfficialSebiSourceCheckAndQueue({
+        forceRefresh,
+        existingIpos: data.ipos,
+        existingReviews: data.ipoReviews,
       });
 
-      const body = (await res.json()) as {
-        checkedAt?: string;
-        portals?: PortalStatus[];
-        candidates?: CandidateItem[];
-        policyNote?: string;
-        error?: string;
-      };
-      if (!res.ok) {
-        throw new Error(body.error || `Official check returned HTTP ${res.status}`);
-      }
-
-      setPortals(body.portals ?? []);
-      setPolicyNote(body.policyNote ?? null);
-
-      const candidates = body.candidates ?? [];
-      let createdCount = 0;
-
-      for (const cand of candidates) {
-        const existingIpo = data.ipos.find(
-          (i) => i.companyName.toLowerCase() === cand.companyName.toLowerCase(),
-        );
-        const diffs = detectIpoFieldDiffs(existingIpo, cand);
-        const alreadyPending = data.ipoReviews.some(
-          (r) =>
-            r.reviewStatus === 'Needs Review' &&
-            r.companyName.toLowerCase() === cand.companyName.toLowerCase(),
-        );
-        if (diffs.length > 0 && !alreadyPending) {
-          const revId = `rev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-          await saveIpoSourceReview(
-            {
-              id: revId,
-              companyName: cand.companyName,
-              targetIpoId: existingIpo?.id,
-              segment: cand.segment,
-              reviewStatus: 'Needs Review',
-              sourceName: cand.sourceName,
-              sourceUrl: cand.sourceUrl,
-              checkedAt: body.checkedAt || new Date().toISOString(),
-              diffs,
-              detectedSummary: cand.summary,
-            },
-            true,
-          );
-          createdCount++;
-        }
-      }
-
-      await writeAuditLog({
-        action: 'ipo_source_check',
-        entityType: 'ipoReview',
-        entityId: `chk_${Date.now()}`,
-        nextStatus: 'Checked',
-        summary: `Checked official IPO portals (${candidates.length} candidate(s), ${createdCount} queued for review).`,
-      });
+      setPortals(report.portals);
+      setPolicyNote(report.policyNote || null);
 
       await onRefresh();
-      onNotify({
-        tone: 'ok',
-        text: `Official portal check complete: ${candidates.length} candidate(s) inspected, ${createdCount} new item(s) marked Needs Review.`,
-      });
+      const sebiPortal = report.portals[0];
+      if (sebiPortal && sebiPortal.status !== 'reachable') {
+        onNotify({
+          tone: 'err',
+          text: `${sebiPortal.portalName} (${sebiPortal.status}): ${sebiPortal.message}`,
+        });
+      } else {
+        onNotify({
+          tone: 'ok',
+          text: `Official SEBI source check complete: ${report.candidatesCount} filing(s) inspected, ${report.queuedCount} new item(s) marked Needs Review (${report.skippedDuplicateCount} duplicate(s) skipped).`,
+        });
+      }
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Official source check failed.',
+        text: extractReadableErrorMessage(err, 'Official SEBI source check failed.'),
       });
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
   }
@@ -136,6 +71,8 @@ export function AdminIpoReviews({
     review: IpoSourceReviewRecord,
     decision: 'Approved' | 'Rejected',
   ) {
+    if (resolvingIdsRef.current.has(review.id)) return;
+    resolvingIdsRef.current.add(review.id);
     setBusyId(review.id);
     try {
       await resolveIpoSourceReview({
@@ -149,15 +86,16 @@ export function AdminIpoReviews({
         tone: 'ok',
         text:
           decision === 'Approved'
-            ? `Approved and applied verified official updates for ${review.companyName}.`
+            ? `Approved and applied verified official SEBI updates for ${review.companyName}.`
             : `Rejected update for ${review.companyName}; existing verified IPO data preserved.`,
       });
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to resolve review.',
+        text: extractReadableErrorMessage(err, 'Unable to resolve review.'),
       });
     } finally {
+      resolvingIdsRef.current.delete(review.id);
       setBusyId(null);
     }
   }
@@ -170,10 +108,10 @@ export function AdminIpoReviews({
       <section className="card snap">
         <div className="sec-h">
           <div>
-            <h2>IPO Source Review (Official SEBI / NSE / BSE Check)</h2>
+            <h2>IPO Source Review (Official SEBI Public Issues Check)</h2>
             <p className="sb-sec-sub">
-              Respectful, zero-billing on-demand check (10-minute server cache; never bypasses anti-bot/CAPTCHA).
-              Official portal candidates are staged here as <strong>Needs Review</strong> until approved by Owner or Publisher.
+              Uses ONLY the official SEBI Public Issues portal and linked SEBI filing documents (never NSE/BSE/third-party sites).
+              New or changed filings stay in <strong>Needs Review</strong> until explicitly approved by Owner or Publisher.
             </p>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -181,18 +119,29 @@ export function AdminIpoReviews({
               type="button"
               className="btn sb-admin-touch-btn"
               disabled={checking}
-              onClick={() => void handleCheckOfficialSources(false)}
+              onClick={() => void handleCheckOfficialSebiSource(false)}
             >
-              {checking ? 'Checking Official Portals…' : 'Check Official Sources'}
+              {checking ? 'Checking SEBI Source…' : 'Check Official SEBI Source'}
             </button>
             <button
               type="button"
               className="btn ghost sb-admin-touch-btn"
               disabled={checking}
-              onClick={() => void handleCheckOfficialSources(true)}
+              onClick={() => void handleCheckOfficialSebiSource(true)}
             >
               Force Fresh Check
             </button>
+          </div>
+        </div>
+
+        <div className="sb-note-box" style={{ marginBottom: '16px' }}>
+          <strong>Authorized Source URL:</strong>{' '}
+          <a href={OFFICIAL_SEBI_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--teal)' }}>
+            {OFFICIAL_SEBI_URL} ↗
+          </a>
+          <div className="meta" style={{ marginTop: '4px' }}>
+            SEBI filing dates (DRHP/RHP) are tracked separately from IPO opening and closing dates. Missing offer fields always show as{' '}
+            <strong>Not announced</strong>.
           </div>
         </div>
 
@@ -210,9 +159,12 @@ export function AdminIpoReviews({
                     {p.status}
                   </span>
                 </div>
-                <p className="meta" style={{ margin: '0 0 6px', lineHeight: 1.45 }}>{p.message}</p>
+                <p className="meta" style={{ margin: '0 0 6px', lineHeight: 1.45 }}>
+                  {p.message}
+                  {typeof p.pagesChecked === 'number' ? ` (${p.pagesChecked} page(s) checked)` : ''}
+                </p>
                 <a href={p.url} target="_blank" rel="noreferrer" className="meta" style={{ color: 'var(--teal)' }}>
-                  Open official portal manually ↗
+                  Open official SEBI portal manually ↗
                 </a>
               </div>
             ))}
@@ -246,8 +198,17 @@ export function AdminIpoReviews({
                   {rev.diffs.map((d, idx) => (
                     <div className="sb-admin-diff-row" key={idx}>
                       <strong>{d.label}</strong>
-                      <span className="meta">Previous: {d.previousValue}</span>
-                      <span style={{ color: 'var(--teal)', fontWeight: 600 }}>Detected: {d.detectedValue}</span>
+                      <span className="meta">Previous: {formatOfficialIpoField(d.previousValue)}</span>
+                      <span style={{ color: 'var(--teal)', fontWeight: 600 }}>
+                        Detected:{' '}
+                        {/^https?:\/\//i.test(d.detectedValue) ? (
+                          <a href={d.detectedValue} target="_blank" rel="noreferrer" style={{ color: 'var(--teal)' }}>
+                            {d.detectedValue} ↗
+                          </a>
+                        ) : (
+                          formatOfficialIpoField(d.detectedValue)
+                        )}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -271,7 +232,7 @@ export function AdminIpoReviews({
                   </button>
                   {rev.sourceUrl && (
                     <a href={rev.sourceUrl} target="_blank" rel="noreferrer" className="btn ghost sb-admin-touch-btn">
-                      Verify Link ↗
+                      Verify Official SEBI Link ↗
                     </a>
                   )}
                 </div>
@@ -279,18 +240,21 @@ export function AdminIpoReviews({
             ))}
           </div>
         ) : (
-          <p className="meta">No pending official source diffs awaiting review.</p>
+          <p className="meta">No pending official SEBI source diffs awaiting review.</p>
         )}
 
         {resolvedReviews.length > 0 && (
           <>
             <h3 style={{ marginTop: '20px' }}>Past Review Decisions ({resolvedReviews.length})</h3>
             <div className="sb-admin-list">
-              {resolvedReviews.slice(0, 10).map((r) => (
+              {resolvedReviews.slice(0, 12).map((r) => (
                 <div className="sb-admin-list-row" key={r.id}>
                   <div>
                     <strong>{r.companyName}</strong>
-                    <div className="meta">{r.sourceName} · Reviewed by {r.reviewedByEmail || 'Operator'}</div>
+                    <div className="meta">
+                      {r.sourceName} · Reviewed by {r.reviewedByEmail || 'Operator'}
+                      {r.reviewedAt ? ` · ${r.reviewedAt.slice(0, 16).replace('T', ' ')}` : ''}
+                    </div>
                   </div>
                   <span className={`pill ${r.reviewStatus === 'Approved' ? 'sb-pill-teal' : 'sb-pill-muted'}`}>
                     {r.reviewStatus}

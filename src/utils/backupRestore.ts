@@ -170,3 +170,188 @@ export function validateBackupBundle(raw: unknown): BackupValidationReport {
     },
   };
 }
+
+function pickAllowedKeys(
+  raw: Record<string, unknown>,
+  allowedKeys: readonly string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of allowedKeys) {
+    if (key in raw && raw[key] !== undefined) {
+      out[key] = raw[key];
+    }
+  }
+  return out;
+}
+
+const ARTICLE_RESTORE_KEYS = [
+  'title',
+  'slug',
+  'summary',
+  'body',
+  'enHeadline',
+  'enSummary',
+  'enBody',
+  'hiHeadline',
+  'hiSummary',
+  'hiBody',
+  'category',
+  'tags',
+  'keywords',
+  'entities',
+  'author',
+  'status',
+  'verificationStatus',
+  'sourceName',
+  'sourceUrl',
+  'officialSources',
+  'mediaId',
+  'youtubeUrl',
+  'youtubeVideoId',
+  'youtubeTitle',
+  'language',
+  'durationPreset',
+  'durationHours',
+  'publishedAt',
+  'publishedAtMs',
+  'expiresAtMs',
+  'retainedPrivate',
+  'featuredPlacement',
+  'featuredOrder',
+  'isPaid',
+  'paidCampaignId',
+  'paidDisclosureLabel',
+  'deletionStatus',
+  'deletionApprovedByUid',
+  'deletionApprovedByEmail',
+  'deletionApprovedAtMs',
+  'deletionError',
+  'deletionAttempts',
+] as const;
+
+const MEDIA_RESTORE_KEYS = [
+  'fileName',
+  'storagePath',
+  'mediaType',
+  'duration',
+  'width',
+  'height',
+  'sizeBytes',
+  'credit',
+  'usageRightsConfirmed',
+  'isPublic',
+  'expiresAtMs',
+  'poster',
+  'captions',
+  'transcript',
+  'associatedArticleId',
+  'associatedArticleIds',
+  'youtubeVideoId',
+  'youtubeUrl',
+] as const;
+
+const PAID_CAMPAIGN_RESTORE_KEYS = [
+  'clientName',
+  'articleId',
+  'articleTitle',
+  'startDate',
+  'endDate',
+  'durationHours',
+  'placementPreference',
+  'internalStatus',
+  'disclosureEnabled',
+  'disclosureLabel',
+  'commercialNotes',
+] as const;
+
+const IPO_RESTORE_KEYS = [
+  'companyName',
+  'slug',
+  'segment',
+  'status',
+  'issueSize',
+  'priceBand',
+  'lotSize',
+  'filingDate',
+  'openingDate',
+  'closingDate',
+  'allotmentDate',
+  'listingDate',
+  'sellingShareholder',
+  'offerType',
+  'summary',
+  'officialDocuments',
+  'sourceName',
+  'sourceUrl',
+  'verificationStatus',
+  'lastVerifiedAt',
+] as const;
+
+export function prepareRestoredArticlePayload(
+  art: StoredArticleDoc,
+  actorUid: string,
+  isExisting: boolean,
+): Record<string, unknown> {
+  const base = pickAllowedKeys(art as unknown as Record<string, unknown>, ARTICLE_RESTORE_KEYS);
+  base.updatedByUid = actorUid;
+  if (!isExisting) {
+    base.createdByUid = actorUid;
+  }
+  return base;
+}
+
+export function prepareRestoredMediaPayload(
+  med: StoredMediaAssetDoc,
+  actorUid: string,
+  isExisting: boolean,
+): Record<string, unknown> {
+  const base = pickAllowedKeys(med as unknown as Record<string, unknown>, MEDIA_RESTORE_KEYS);
+  if (!isExisting) {
+    base.uploadedByUid = actorUid;
+  }
+  return base;
+}
+
+export function prepareRestoredMediaBlobPayload(
+  pay: StoredMediaPayloadDoc,
+  safeMediaId: string,
+  actorUid: string,
+  isExisting: boolean,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    mediaId: safeMediaId,
+    mimeType: pay.mimeType,
+    sizeBytes: pay.sizeBytes,
+    dataUrl: pay.dataUrl,
+    isPublic: Boolean(pay.isPublic),
+  };
+  if (!isExisting) {
+    base.uploadedByUid = actorUid;
+  }
+  return base;
+}
+
+export function prepareRestoredPaidCampaignPayload(
+  camp: PaidCampaignRecord,
+  actorUid: string,
+  isExisting: boolean,
+): Record<string, unknown> {
+  const base = pickAllowedKeys(
+    camp as unknown as Record<string, unknown>,
+    PAID_CAMPAIGN_RESTORE_KEYS,
+  );
+  if (!isExisting) {
+    base.createdByUid = actorUid;
+  }
+  return base;
+}
+
+export function prepareRestoredIpoPayload(
+  ipo: ManagedIpoRecord,
+  actorUid: string,
+): Record<string, unknown> {
+  const base = pickAllowedKeys(ipo as unknown as Record<string, unknown>, IPO_RESTORE_KEYS);
+  base.updatedByUid = actorUid;
+  return base;
+}
+

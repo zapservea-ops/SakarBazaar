@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { savePaidCampaign } from '../../lib/firebase';
 import type { PaidCampaignRecord } from '../../types/sakarbazaar';
+import { extractReadableErrorMessage, extractTimestampMillis } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBaseProps) {
@@ -16,8 +17,13 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
   const [disclosureLabel, setDisclosureLabel] = useState('Partner Disclosure');
   const [commercialNotes, setCommercialNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const pendingPaidIdRef = useRef<string | null>(null);
+  const editingUpdatedAtMsRef = useRef<number | null>(null);
 
   function resetForm() {
+    pendingPaidIdRef.current = null;
+    editingUpdatedAtMsRef.current = null;
     setEditingId(null);
     setClientName('');
     setArticleId('');
@@ -32,6 +38,8 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
   }
 
   function loadCampaign(c: PaidCampaignRecord) {
+    pendingPaidIdRef.current = c.id;
+    editingUpdatedAtMsRef.current = extractTimestampMillis(c.updatedAt);
     setEditingId(c.id);
     setClientName(c.clientName);
     setArticleId(c.articleId || '');
@@ -46,14 +54,23 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
   }
 
   async function handleSave() {
+    if (busyRef.current) return;
     if (clientName.trim().length < 2) {
       onNotify({ tone: 'err', text: 'Client name (2+ characters) is required.' });
       return;
     }
+    if (!Number.isFinite(durationHours) || durationHours < 1 || durationHours > 43800) {
+      onNotify({ tone: 'err', text: 'Campaign duration must be between 1 and 43,800 hours.' });
+      return;
+    }
+    busyRef.current = true;
     setBusy(true);
     try {
       const linked = data.articles.find((a) => a.id === articleId);
-      const id = editingId || `paid_${Date.now().toString(36)}`;
+      if (!editingId && !pendingPaidIdRef.current) {
+        pendingPaidIdRef.current = `paid_${Date.now().toString(36)}`;
+      }
+      const id = editingId || pendingPaidIdRef.current!;
       await savePaidCampaign(
         {
           id,
@@ -62,7 +79,7 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
           articleTitle: linked ? linked.enHeadline || linked.title : undefined,
           startDate: startDate || undefined,
           endDate: endDate || undefined,
-          durationHours,
+          durationHours: Math.round(durationHours),
           placementPreference,
           internalStatus,
           disclosureEnabled,
@@ -70,13 +87,15 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
           commercialNotes,
         },
         !editingId,
+        editingId ? editingUpdatedAtMsRef.current : null,
       );
       await onRefresh();
       resetForm();
       onNotify({ tone: 'ok', text: `Saved private paid campaign for ${clientName.trim()}.` });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Unable to save campaign.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Unable to save campaign.') });
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -131,7 +150,13 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
         <div className="sb-form-grid">
           <label className="sb-form-field">
             <span>Duration (Hours)</span>
-            <input type="number" min={1} value={durationHours} onChange={(e) => setDurationHours(Number(e.target.value) || 24)} />
+            <input
+              type="number"
+              min={1}
+              max={43800}
+              value={durationHours}
+              onChange={(e) => setDurationHours(Math.min(43800, Math.max(1, Number(e.target.value) || 24)))}
+            />
           </label>
           <label className="sb-form-field">
             <span>Internal Status</span>

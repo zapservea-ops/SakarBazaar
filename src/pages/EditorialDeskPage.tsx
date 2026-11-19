@@ -18,6 +18,7 @@ import type {
   VerificationStatus,
 } from '../types/sakarbazaar';
 import { slugifyTitle } from '../utils/marketFormat';
+import { computeExpiresAtMs } from '../utils/newsLifecycle';
 
 const EDITORIAL_CATEGORIES: Exclude<NewsCategory, 'All'>[] = [
   'IPO',
@@ -200,6 +201,9 @@ export function EditorialDeskPage() {
     setSaving(true);
     setFeedback(null);
 
+    const nowMs = Date.now();
+    const defaultDurationHours = 360;
+
     try {
       await saveEditorialArticle({
         articleId,
@@ -236,7 +240,13 @@ export function EditorialDeskPage() {
           language,
           createdByUid: user?.uid || 'unknown',
           ...(nextStatus === 'Published'
-            ? { publishedAt: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) }
+            ? {
+                publishedAt: new Date(nowMs).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+                publishedAtMs: nowMs,
+                expiresAtMs: computeExpiresAtMs(nowMs, defaultDurationHours),
+                durationPreset: '15d',
+                durationHours: defaultDurationHours,
+              }
             : {}),
         },
       });
@@ -559,7 +569,7 @@ export function EditorialDeskPage() {
                 >
                   Mark Awaiting Verification
                 </button>
-                {editorRole === 'admin' && (
+                {isAuthorizedEditor && (
                   <>
                     <button
                       type="button"

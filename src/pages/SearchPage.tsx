@@ -40,7 +40,7 @@ function storeRecentSearch(query: string) {
 
 export function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { lang, ui, articlesCatalog, ipoRecords, allMarketInstruments, watchlistIds, toggleWatchlist, setSearchTerm } =
+  const { lang, ui, articlesCatalog, ipoRecords, allMarketInstruments, setSearchTerm } =
     useSakarBazaar();
   const initialQuery = searchParams.get('q') ?? '';
   const [queryInput, setQueryInput] = useState(initialQuery);
@@ -292,9 +292,7 @@ export function SearchPage() {
                   View All Markets →
                 </Link>
               </div>
-              {results.instruments.map((inst) => {
-                const isTracked = watchlistIds.has(inst.id);
-                return (
+              {results.instruments.map((inst) => (
                   <div className="sb-search-result-row" key={inst.id}>
                     <div>
                       <div
@@ -323,8 +321,7 @@ export function SearchPage() {
                       </Link>
                     </div>
                   </div>
-                );
-              })}
+              ))}
             </section>
           )}
 
@@ -401,8 +398,8 @@ export function SearchPage() {
                       {ipo.company}
                     </Link>
                     <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--muted)' }}>
-                      {ipo.priceBand ?? 'Price band TBD'} · {ipo.issueSize ?? 'Size TBD'} ·{' '}
-                      {ipo.offerType ?? 'TBD'}
+                      {ipo.priceBand ?? 'Price band: Not announced'} · {ipo.issueSize ?? 'Issue size: Not announced'} ·{' '}
+                      {ipo.offerType ?? 'Not announced'}
                     </p>
                   </div>
                   <Link to={`/ipo/${ipo.slug}`} className="btn ghost">

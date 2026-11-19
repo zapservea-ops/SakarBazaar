@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
   saveCompressedPhotoAsset,
   saveEditorialArticle,
@@ -12,7 +12,6 @@ import type {
   NewsCategory,
   StoredArticleDoc,
 } from '../../types/sakarbazaar';
-import { slugifyTitle } from '../../utils/marketFormat';
 import {
   compressImageFileInBrowser,
   parseYouTubeVideoUrl,
@@ -20,8 +19,11 @@ import {
 import {
   applyMinorEditPreservingExpiry,
   computeExpiresAtMs,
+  extractReadableErrorMessage,
+  extractTimestampMillis,
   formatRemainingDuration,
   resolveDurationHours,
+  sanitizeArticleSlug,
   validateArticleDraftInput,
   validateArticlePublishInput,
 } from '../../utils/newsLifecycle';
@@ -70,6 +72,7 @@ export function AdminNewsDesk({
   const [durationPreset, setDurationPreset] = useState<DurationPreset>(
     data.systemSettings.defaultDurationPreset || '15d',
   );
+  const [durationTouched, setDurationTouched] = useState(false);
   const [customHours, setCustomHours] = useState<number>(72);
   const [featuredPlacement, setFeaturedPlacement] = useState<FeaturedPlacement>('none');
   const [isPaid, setIsPaid] = useState(false);
@@ -103,8 +106,23 @@ export function AdminNewsDesk({
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  // Synchronous submit + idempotency + optimistic version guards
+  const savingRef = useRef(false);
+  const pendingArticleIdRef = useRef<string | null>(null);
+  const editingUpdatedAtMsRef = useRef<number | null>(null);
+  const uploadedPhotoRef = useRef<{ signature: string; mediaId: string } | null>(null);
+
+  useEffect(() => {
+    if (!editingArticle && !durationTouched && data.systemSettings.defaultDurationPreset) {
+      setDurationPreset(data.systemSettings.defaultDurationPreset);
+    }
+  }, [editingArticle, durationTouched, data.systemSettings.defaultDurationPreset]);
+
   useEffect(() => {
     if (!editingArticle) return;
+    pendingArticleIdRef.current = editingArticle.id;
+    editingUpdatedAtMsRef.current = extractTimestampMillis(editingArticle.updatedAt);
+    uploadedPhotoRef.current = null;
     setCategory(editingArticle.category);
     setAuthor(editingArticle.author || 'SakarBazaar Editorial Desk');
     setSourceName(editingArticle.sourceName || '');
@@ -116,27 +134,43 @@ export function AdminNewsDesk({
     setHiSummary(editingArticle.hiSummary || '');
     setHiBody(editingArticle.hiBody || '');
     setDurationPreset(editingArticle.durationPreset || '15d');
+    setDurationTouched(true);
     setCustomHours(editingArticle.durationHours || 72);
     setFeaturedPlacement(editingArticle.featuredPlacement || 'none');
     setIsPaid(Boolean(editingArticle.isPaid));
     setPaidDisclosureLabel(editingArticle.paidDisclosureLabel || 'Partner Disclosure');
 
+    setPhotoDataUrl('');
+    setPhotoFileName('');
+    setPhotoSizeBytes(0);
+    setPhotoOriginalBytes(0);
+    setMediaCredit('');
+    setUsageRightsConfirmed(false);
+
     if (editingArticle.mediaId) {
       setMediaMode('existing');
       setSelectedExistingMediaId(editingArticle.mediaId);
+      setYoutubeInput(editingArticle.youtubeUrl || editingArticle.youtubeVideoId || '');
+      setYoutubeTitle(editingArticle.youtubeTitle || '');
     } else if (editingArticle.youtubeUrl || editingArticle.youtubeVideoId) {
       setMediaMode('youtube');
+      setSelectedExistingMediaId('');
       setYoutubeInput(editingArticle.youtubeUrl || editingArticle.youtubeVideoId || '');
       setYoutubeTitle(editingArticle.youtubeTitle || '');
     } else {
       setMediaMode('none');
       setSelectedExistingMediaId('');
+      setYoutubeInput('');
+      setYoutubeTitle('');
     }
     setLocalError(null);
   }, [editingArticle]);
 
   function resetComposer() {
     onClearEditing();
+    pendingArticleIdRef.current = null;
+    editingUpdatedAtMsRef.current = null;
+    uploadedPhotoRef.current = null;
     setCategory('Markets');
     setAuthor('SakarBazaar Editorial Desk');
     setSourceName('');
@@ -148,6 +182,7 @@ export function AdminNewsDesk({
     setHiSummary('');
     setHiBody('');
     setDurationPreset(data.systemSettings.defaultDurationPreset || '15d');
+    setDurationTouched(false);
     setCustomHours(72);
     setFeaturedPlacement('none');
     setIsPaid(false);
@@ -175,6 +210,7 @@ export function AdminNewsDesk({
       const compressed = await compressImageFileInBrowser(file, {
         targetBytes: data.systemSettings.maxImageSizeBytes || 180_000,
       });
+      uploadedPhotoRef.current = null;
       setPhotoDataUrl(compressed.dataUrl);
       setPhotoMime(compressed.mimeType);
       setPhotoWidth(compressed.width);
@@ -189,27 +225,10 @@ export function AdminNewsDesk({
     }
   }
 
-  async function executeSave(targetMode: 'draft' | 'minor_edit' | 'publish') {
-    setLocalError(null);
-
-    const draftCheck = validateArticleDraftInput({
-      enHeadline,
-      enSummary,
-      enBody,
-      hiHeadline,
-      hiSummary,
-      hiBody,
-      sourceName,
-      sourceUrl,
-      durationPreset,
-      customHours,
-    });
-
-    if (targetMode !== 'publish' && !draftCheck.valid) {
-      setLocalError(draftCheck.errors.join(' '));
-      return;
+  function validateBeforeAction(targetMode: 'draft' | 'minor_edit' | 'publish'): string | null {
+    if (author.trim().length < 2 || author.trim().length > 120) {
+      return 'Author / Byline must be between 2 and 120 characters.';
     }
-
     if (targetMode === 'publish') {
       const publishCheck = validateArticlePublishInput({
         enHeadline,
@@ -224,26 +243,67 @@ export function AdminNewsDesk({
         customHours,
       });
       if (!publishCheck.valid) {
-        setLocalError(publishCheck.errors.join(' '));
-        return;
+        return publishCheck.errors.join(' ');
+      }
+    } else {
+      const draftCheck = validateArticleDraftInput({
+        enHeadline,
+        enSummary,
+        enBody,
+        hiHeadline,
+        hiSummary,
+        hiBody,
+        sourceName,
+        sourceUrl,
+        durationPreset,
+        customHours,
+      });
+      if (!draftCheck.valid) {
+        return draftCheck.errors.join(' ');
       }
     }
 
     if (mediaMode === 'photo' && photoDataUrl && (!mediaCredit.trim() || !usageRightsConfirmed)) {
-      setLocalError('Please enter photographer/source credit and confirm usage rights before saving an uploaded photograph.');
-      return;
+      return 'Please enter photographer/source credit and confirm usage rights before saving an uploaded photograph.';
     }
     if (mediaMode === 'youtube' && youtubeInput.trim() && !parsedYouTube) {
-      setLocalError('Enter a valid YouTube video URL or 11-character YouTube video ID.');
+      return 'Enter a valid YouTube video URL or 11-character YouTube video ID.';
+    }
+    if (mediaMode === 'existing' && !selectedExistingMediaId) {
+      return 'Select an existing asset from the Media Library or switch media mode to No Media.';
+    }
+    return null;
+  }
+
+  async function executeSave(targetMode: 'draft' | 'minor_edit' | 'publish') {
+    if (savingRef.current || saving) return;
+    setLocalError(null);
+
+    const validationError = validateBeforeAction(targetMode);
+    if (validationError) {
+      setLocalError(validationError);
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
-      const isNew = !editingArticle;
-      const baseSlug = slugifyTitle(enHeadline || hiHeadline) || `dispatch-${Date.now().toString(36)}`;
-      const articleId = editingArticle?.id || `${baseSlug.slice(0, 90)}-${Date.now().toString(36)}`;
-      const slug = editingArticle?.slug || baseSlug.slice(0, 140);
+      const alreadyPersistedDraft = Boolean(
+        editingArticle ||
+          (pendingArticleIdRef.current &&
+            data.articles.some((a) => a.id === pendingArticleIdRef.current)),
+      );
+      const isNew = !alreadyPersistedDraft;
+
+      const baseSlug = sanitizeArticleSlug(enHeadline || hiHeadline, 'dispatch');
+      if (!pendingArticleIdRef.current) {
+        pendingArticleIdRef.current =
+          editingArticle?.id || `${baseSlug.slice(0, 90)}-${Date.now().toString(36)}`;
+      }
+      const articleId = pendingArticleIdRef.current;
+      const slug = editingArticle?.slug
+        ? sanitizeArticleSlug(editingArticle.slug, 'dispatch')
+        : baseSlug.slice(0, 140);
 
       const nowMs = Date.now();
       const resolvedHours = resolveDurationHours(durationPreset, customHours);
@@ -276,7 +336,7 @@ export function AdminNewsDesk({
         nextStatus = 'Draft';
       }
 
-      // Save attached media first if new photo or YouTube asset
+      // Save attached media first if new photo or YouTube asset, reusing mediaId on retries
       let finalMediaId = mediaMode === 'existing' ? selectedExistingMediaId : undefined;
       let finalYoutubeUrl: string | undefined;
       let finalYoutubeId: string | undefined;
@@ -285,10 +345,15 @@ export function AdminNewsDesk({
       const mediaIsPublic = nextStatus === 'Published';
 
       if (mediaMode === 'photo' && photoDataUrl) {
-        const newMediaId = `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        const photoSig = `${photoFileName}:${photoSizeBytes}:${photoDataUrl.slice(0, 64)}`;
+        const alreadyUploaded =
+          uploadedPhotoRef.current?.signature === photoSig ? uploadedPhotoRef.current.mediaId : null;
+        const targetMediaId =
+          alreadyUploaded || `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
         await saveCompressedPhotoAsset({
-          mediaId: newMediaId,
-          fileName: photoFileName || `${newMediaId}.jpg`,
+          mediaId: targetMediaId,
+          fileName: photoFileName || `${targetMediaId}.jpg`,
           mimeType: photoMime,
           dataUrl: photoDataUrl,
           sizeBytes: photoSizeBytes,
@@ -296,23 +361,25 @@ export function AdminNewsDesk({
           height: photoHeight,
           credit: mediaCredit.trim(),
           usageRightsConfirmed,
-          captions: enSummary.trim() || enHeadline.trim(),
+          captions: (enSummary.trim() || enHeadline.trim()).slice(0, 1200),
           isPublic: mediaIsPublic,
           expiresAtMs,
           associatedArticleIds: [articleId],
+          isUpdate: Boolean(alreadyUploaded),
         });
-        finalMediaId = newMediaId;
+        uploadedPhotoRef.current = { signature: photoSig, mediaId: targetMediaId };
+        finalMediaId = targetMediaId;
       } else if (mediaMode === 'youtube' && parsedYouTube) {
         const ytMediaId = `yt_${parsedYouTube.videoId}`;
         finalYoutubeUrl = parsedYouTube.canonicalUrl;
         finalYoutubeId = parsedYouTube.videoId;
-        finalYoutubeTitle = youtubeTitle.trim() || enHeadline.trim() || 'SakarBazaar Video Report';
+        finalYoutubeTitle = (youtubeTitle.trim() || enHeadline.trim() || 'SakarBazaar Video Report').slice(0, 200);
         await saveYouTubeMediaAsset({
           mediaId: ytMediaId,
           youtubeUrl: parsedYouTube.canonicalUrl,
           youtubeVideoId: parsedYouTube.videoId,
           title: finalYoutubeTitle,
-          credit: mediaCredit.trim() || 'SakarBazaar YouTube Channel',
+          credit: (mediaCredit.trim() || 'SakarBazaar YouTube Channel').slice(0, 200),
           usageRightsConfirmed: true,
           isPublic: mediaIsPublic,
           expiresAtMs,
@@ -321,13 +388,14 @@ export function AdminNewsDesk({
         finalMediaId = ytMediaId;
       }
 
-      const cleanEnSummary = enSummary.trim() || enBody.trim().slice(0, 200);
-      const cleanHiSummary = hiSummary.trim() || hiBody.trim().slice(0, 200);
+      const cleanEnSummary = (enSummary.trim() || enBody.trim().slice(0, 200)).slice(0, 1200);
+      const cleanHiSummary = (hiSummary.trim() || hiBody.trim().slice(0, 200)).slice(0, 1200);
 
       await saveEditorialArticle({
         articleId,
         isNew,
         previousStatus: editingArticle?.status,
+        expectedUpdatedAtMs: isNew ? null : editingUpdatedAtMsRef.current,
         action:
           targetMode === 'publish'
             ? 'publish'
@@ -339,25 +407,25 @@ export function AdminNewsDesk({
           slug,
           summary: (cleanEnSummary || cleanHiSummary).slice(0, 1100),
           body: (enBody.trim() || hiBody.trim()).slice(0, 24000),
-          enHeadline: enHeadline.trim(),
+          enHeadline: enHeadline.trim().slice(0, 260),
           enSummary: cleanEnSummary,
-          enBody: enBody.trim(),
-          hiHeadline: hiHeadline.trim(),
+          enBody: enBody.trim().slice(0, 25000),
+          hiHeadline: hiHeadline.trim().slice(0, 260),
           hiSummary: cleanHiSummary,
-          hiBody: hiBody.trim(),
+          hiBody: hiBody.trim().slice(0, 25000),
           category,
           tags: [category],
-          keywords: [category, enHeadline.split(/\s+/)[0] || 'India'].filter(Boolean),
+          keywords: [category, enHeadline.split(/\s+/)[0] || 'India'].filter(Boolean).slice(0, 20),
           entities: [],
-          author: author.trim() || 'SakarBazaar Editorial Desk',
+          author: author.trim().slice(0, 120) || 'SakarBazaar Editorial Desk',
           status: nextStatus,
           verificationStatus: nextStatus === 'Published' ? 'verified' : 'awaiting_verification',
-          sourceName: sourceName.trim(),
-          ...(sourceUrl.trim() ? { sourceUrl: sourceUrl.trim() } : {}),
-          ...(finalMediaId ? { mediaId: finalMediaId } : {}),
-          ...(finalYoutubeUrl ? { youtubeUrl: finalYoutubeUrl } : {}),
-          ...(finalYoutubeId ? { youtubeVideoId: finalYoutubeId } : {}),
-          ...(finalYoutubeTitle ? { youtubeTitle: finalYoutubeTitle } : {}),
+          sourceName: sourceName.trim().slice(0, 160),
+          sourceUrl: sourceUrl.trim().slice(0, 500),
+          mediaId: finalMediaId || '',
+          youtubeUrl: finalYoutubeUrl ? finalYoutubeUrl.slice(0, 300) : '',
+          youtubeVideoId: finalYoutubeId ? finalYoutubeId.slice(0, 32) : '',
+          youtubeTitle: finalYoutubeTitle ? finalYoutubeTitle.slice(0, 200) : '',
           language: enHeadline.trim() && hiHeadline.trim() ? 'bilingual' : hiHeadline.trim() ? 'hi' : 'en',
           durationPreset: finalPreset,
           durationHours: finalHours,
@@ -368,29 +436,34 @@ export function AdminNewsDesk({
           featuredPlacement,
           featuredOrder: featuredPlacement === 'main' ? 0 : featuredPlacement === 'secondary' ? 1 : 99,
           isPaid,
-          paidDisclosureLabel: isPaid ? paidDisclosureLabel.trim() || 'Partner Disclosure' : '',
+          paidDisclosureLabel: isPaid ? paidDisclosureLabel.trim().slice(0, 64) || 'Partner Disclosure' : '',
           deletionStatus: 'none',
           createdByUid: editingArticle?.createdByUid || userUid,
         },
       });
 
+      const previousMediaId = editingArticle?.mediaId;
+      const virtualUpdated = data.articles.some((a) => a.id === articleId)
+        ? data.articles.map((a) =>
+            a.id === articleId
+              ? { ...a, mediaId: finalMediaId || '', status: nextStatus, expiresAtMs }
+              : a,
+          )
+        : [
+            ...data.articles,
+            {
+              id: articleId,
+              mediaId: finalMediaId || '',
+              status: nextStatus,
+              expiresAtMs,
+            } as StoredArticleDoc,
+          ];
+
       if (finalMediaId) {
-        const virtualUpdated = data.articles.some((a) => a.id === articleId)
-          ? data.articles.map((a) =>
-              a.id === articleId
-                ? { ...a, mediaId: finalMediaId, status: nextStatus, expiresAtMs }
-                : a,
-            )
-          : [
-              ...data.articles,
-              {
-                id: articleId,
-                mediaId: finalMediaId,
-                status: nextStatus,
-                expiresAtMs,
-              } as StoredArticleDoc,
-            ];
         await syncMediaVisibilityAcrossArticles(finalMediaId, virtualUpdated);
+      }
+      if (previousMediaId && previousMediaId !== finalMediaId) {
+        await syncMediaVisibilityAcrossArticles(previousMediaId, virtualUpdated);
       }
 
       setConfirmPublishOpen(false);
@@ -408,10 +481,19 @@ export function AdminNewsDesk({
       });
       if (targetMode === 'publish') {
         resetComposer();
+      } else {
+        // Advance our local baseline so consecutive draft saves from this session succeed cleanly
+        editingUpdatedAtMsRef.current = Date.now() + 2_000;
       }
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Unable to save article.');
+      const msg = extractReadableErrorMessage(
+        err,
+        'Unable to publish or save article. Entered form fields have been preserved.',
+      );
+      setLocalError(msg);
+      onNotify({ tone: 'err', text: msg });
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -591,7 +673,10 @@ export function AdminNewsDesk({
               <span>Active Duration (exact elapsed hours)</span>
               <select
                 value={durationPreset}
-                onChange={(e) => setDurationPreset(e.target.value as DurationPreset)}
+                onChange={(e) => {
+                  setDurationPreset(e.target.value as DurationPreset);
+                  setDurationTouched(true);
+                }}
               >
                 <option value="7d">7 Days (168 hours)</option>
                 <option value="15d">15 Days (360 hours)</option>
@@ -820,20 +905,9 @@ export function AdminNewsDesk({
             className="btn sb-admin-touch-btn"
             disabled={saving}
             onClick={() => {
-              const check = validateArticlePublishInput({
-                enHeadline,
-                enSummary,
-                enBody,
-                hiHeadline,
-                hiSummary,
-                hiBody,
-                sourceName,
-                sourceUrl,
-                durationPreset,
-                customHours,
-              });
-              if (!check.valid) {
-                setLocalError(check.errors.join(' '));
+              const validationError = validateBeforeAction('publish');
+              if (validationError) {
+                setLocalError(validationError);
                 return;
               }
               setLocalError(null);
@@ -907,11 +981,30 @@ export function AdminNewsDesk({
               for <strong>{resolveDurationHours(durationPreset, customHours)} hours</strong>. After that exact
               elapsed duration, the article will move automatically to Expired / Private.
             </p>
+            <div className="sb-note-box" style={{ marginBottom: '12px', fontSize: '13px' }}>
+              <div><strong>EN:</strong> {enHeadline.trim()}</div>
+              <div><strong>हिंदी:</strong> {hiHeadline.trim()}</div>
+              {(sourceName.trim() || sourceUrl.trim()) && (
+                <div>
+                  <strong>Source:</strong> {sourceName.trim() || 'Specified link'}
+                  {sourceUrl.trim() ? ` (${sourceUrl.trim()})` : ''}
+                </div>
+              )}
+            </div>
+            {localError && (
+              <div className="sb-admin-alert err" role="alert" style={{ marginBottom: '12px' }}>
+                {localError}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn ghost sb-admin-touch-btn"
-                onClick={() => setConfirmPublishOpen(false)}
+                disabled={saving}
+                onClick={() => {
+                  setLocalError(null);
+                  setConfirmPublishOpen(false);
+                }}
               >
                 Cancel
               </button>

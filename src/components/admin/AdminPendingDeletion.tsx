@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   cancelArticleDeletionApproval,
   executePermanentArticleDeletion,
 } from '../../lib/firebase';
 import type { StoredArticleDoc } from '../../types/sakarbazaar';
 import { canSafelyDeleteMediaAsset } from '../../utils/mediaLibrary';
-import { canRetryPermanentDeletion } from '../../utils/newsLifecycle';
+import { canRetryPermanentDeletion, extractReadableErrorMessage } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 interface AdminPendingDeletionProps extends AdminSectionBaseProps {
@@ -21,6 +21,7 @@ export function AdminPendingDeletion({
 }: AdminPendingDeletionProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmExecuteId, setConfirmExecuteId] = useState<string | null>(null);
+  const busyIdsRef = useRef<Set<string>>(new Set());
 
   const queue = data.articles.filter(
     (art) =>
@@ -32,6 +33,8 @@ export function AdminPendingDeletion({
   );
 
   async function handleExecute(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     setConfirmExecuteId(null);
     try {
@@ -45,18 +48,22 @@ export function AdminPendingDeletion({
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Deletion failed.',
+        text: extractReadableErrorMessage(err, 'Deletion failed.'),
       });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }
 
   async function handleCancel(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
       await cancelArticleDeletionApproval(art);
       await onRefresh();
+      await onPublicContentChanged();
       onNotify({
         tone: 'ok',
         text: `Cancelled deletion and kept "${art.enHeadline || art.title}" in private archive.`,
@@ -64,9 +71,10 @@ export function AdminPendingDeletion({
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to cancel deletion.',
+        text: extractReadableErrorMessage(err, 'Unable to cancel deletion.'),
       });
     } finally {
+      busyIdsRef.current.delete(art.id);
       setBusyId(null);
     }
   }

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
-import { EXPLAINERS_CATALOG, IPO_ALL_RECORDS } from '../data/sampleData';
+import { EXPLAINERS_CATALOG } from '../data/sampleData';
 import { submitContactNote } from '../lib/firebase';
 import type { SupportingRouteKey } from '../types/sakarbazaar';
 import { isValidEmailAddress } from '../utils/marketFormat';
@@ -12,7 +12,7 @@ interface SupportingPageProps {
 }
 
 export function SupportingPage({ page }: SupportingPageProps) {
-  const { ui, articlesCatalog } = useSakarBazaar();
+  const { ui, articlesCatalog, ipoRecords } = useSakarBazaar();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [topic, setTopic] = useState<
@@ -240,14 +240,21 @@ export function SupportingPage({ page }: SupportingPageProps) {
     <language>en-in</language>
     ${articlesCatalog
       .slice(0, 5)
-      .map(
-        (a) => `<item>
-      <title>${a.headline}</title>
-      <category>${a.category}</category>
-      <pubDate>${a.publishedAt}</pubDate>
-      <link>/article/${a.slug}</link>
-    </item>`,
-      )
+      .map((a) => {
+        const esc = (val: string) =>
+          val
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+        return `<item>
+      <title>${esc(a.headline)}</title>
+      <category>${esc(a.category)}</category>
+      <pubDate>${esc(a.publishedAt)}</pubDate>
+      <link>/article/${esc(a.slug)}</link>
+    </item>`;
+      })
       .join('\n    ')}
   </channel>
 </rss>`}</pre>
@@ -276,10 +283,10 @@ export function SupportingPage({ page }: SupportingPageProps) {
               </div>
               <div>
                 <h3 style={{ font: '700 17px var(--serif)', margin: '0 0 8px' }}>
-                  IPO Dossiers ({IPO_ALL_RECORDS.length})
+                  IPO Dossiers ({ipoRecords.length})
                 </h3>
                 <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.8 }}>
-                  {IPO_ALL_RECORDS.map((ipo) => (
+                  {ipoRecords.map((ipo) => (
                     <li key={ipo.id}>
                       <Link to={`/ipo/${ipo.slug}`}>{ipo.company}</Link>
                     </li>

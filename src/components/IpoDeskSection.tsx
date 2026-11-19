@@ -100,14 +100,14 @@ export function IpoDeskSection({
                         {row.sellingShareholder ? `Seller: ${row.sellingShareholder}` : row.segment}
                       </small>
                     </td>
-                    <td className="num">{row.issueSize ?? 'Not disclosed'}</td>
-                    <td className="num">{row.priceBand ?? 'Not disclosed'}</td>
+                    <td className="num">{row.issueSize ?? 'Not announced'}</td>
+                    <td className="num">{row.priceBand ?? 'Not announced'}</td>
                     <td>
                       {row.openDate && row.closeDate
                         ? `${row.openDate} – ${row.closeDate}`
-                        : 'Pending RHP'}
+                        : 'Not announced'}
                     </td>
-                    <td>{row.offerType ?? 'TBD'}</td>
+                    <td>{row.offerType ?? 'Not announced'}</td>
                     <td className="n">
                       <button
                         type="button"
@@ -188,23 +188,23 @@ export function IpoDeskSection({
                 <dl className="sb-ipo-dl">
                   <div>
                     <dt>{ui.tableIssueSize}</dt>
-                    <dd className="num">{row.issueSize ?? 'TBD'}</dd>
+                    <dd className="num">{row.issueSize ?? 'Not announced'}</dd>
                   </div>
                   <div>
                     <dt>{ui.tablePriceBand}</dt>
-                    <dd className="num">{row.priceBand ?? 'TBD'}</dd>
+                    <dd className="num">{row.priceBand ?? 'Not announced'}</dd>
                   </div>
                   <div>
                     <dt>{ui.tableOpenClose}</dt>
                     <dd>
                       {row.openDate && row.closeDate
                         ? `${row.openDate} – ${row.closeDate}`
-                        : 'Pending RHP'}
+                        : 'Not announced'}
                     </dd>
                   </div>
                   <div>
                     <dt>{ui.tableOfferType}</dt>
-                    <dd>{row.offerType ?? 'TBD'}</dd>
+                    <dd>{row.offerType ?? 'Not announced'}</dd>
                   </div>
                 </dl>
 
@@ -225,8 +225,7 @@ export function IpoDeskSection({
 
       <div className="gl" style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
         <div style={{ flex: '1 1 320px' }}>
-          Official filings check: confirm DRHP/RHP documents directly on SEBI, NSE, and BSE before
-          treating any dates or terms as final.
+          Official filings check: automated IPO source checks read only the official SEBI Public Issues portal; unannounced opening/closing dates remain &ldquo;Not announced&rdquo; until verified.
         </div>
         <Link to="/ipo" className="btn ghost">
           {ui.openTracker} →

@@ -5,10 +5,9 @@
    - **Owner:** `jeetsheetalpuri@gmail.com` (`isBootstrappedOwner()`, never locked out) or `/admins/{uid}` with `role in ['owner', 'admin']` (with `email_verified == true`). Holds full operational + system-settings/permissions authority.
    - **Publisher:** `/admins/{uid}` with `role in ['publisher', 'editor']`, OR an active entry in `/authorizedEmails/{emailLower}` (`active == true`) with `email_verified == true`. Holds full operational authority across newsroom drafting/publishing/extending/retaining/restoring, media management, featured placement, paid publications, permanent deletion approval/execution, IPO management & official-source review, and full manual backup export. Cannot modify `/admins/*`, `/authorizedEmails/*`, or `/systemSettings/*`.
 2. **Public Zero-Exposure of Expired, Draft, Deleted, or Private Records:**
-   - Public `get` on `/articles/{articleId}` is allowed ONLY when `status == 'Published'`, `expiresAt > request.time`, and `deletionStatus == 'none'` (or absent on legacy docs).
-   - Public `list` on `/articles` is allowed ONLY when querying `status == 'Published'`.
+   - Public `get` and `list` on `/articles` are allowed ONLY when `status == 'Published'`, `expiresAt > request.time`, and `deletionStatus == 'none'` (or when authorized Owner/Publisher).
    - Public `get` on `/media/{mediaId}` and `/mediaPayloads/{mediaId}` is allowed ONLY when `isPublic == true` and `(expiresAt == null || expiresAt > request.time)`.
-   - Public `list` on `/mediaPayloads` is NEVER allowed (`if isEditor()`).
+   - Public `list` on `/media` and `/mediaPayloads` is NEVER allowed (`if isAuthorizedUser()`).
    - `/paidCampaigns`, `/ipoSourceReviews`, `/authorizedEmails`, `/systemSettings`, `/admins`, `/auditLogs`, and `/contactSubmissions` (reads) are NEVER publicly readable.
 3. **Either-User Permanent Deletion & Immutable Audit Trail:**
    - Both Owner and Publisher may transition articles into `Pending Deletion` -> `Deletion In Progress` and delete unshared `/media`, `/mediaPayloads`, and `/articles` documents.

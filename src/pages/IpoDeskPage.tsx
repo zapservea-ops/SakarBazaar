@@ -210,23 +210,23 @@ export function IpoDeskPage() {
                   <dl className="sb-ipo-dl">
                     <div>
                       <dt>{ui.tableIssueSize}</dt>
-                      <dd className="num">{row.issueSize ?? 'TBD'}</dd>
+                      <dd className="num">{row.issueSize ?? 'Not announced'}</dd>
                     </div>
                     <div>
                       <dt>{ui.tablePriceBand}</dt>
-                      <dd className="num">{row.priceBand ?? 'TBD'}</dd>
+                      <dd className="num">{row.priceBand ?? 'Not announced'}</dd>
                     </div>
                     <div>
                       <dt>{ui.tableOpenClose}</dt>
                       <dd>
                         {row.openDate && row.closeDate
                           ? `${row.openDate} – ${row.closeDate}`
-                          : 'Pending RHP'}
+                          : 'Not announced'}
                       </dd>
                     </div>
                     <div>
                       <dt>{ui.tableOfferType}</dt>
-                      <dd>{row.offerType ?? 'TBD'}</dd>
+                      <dd>{row.offerType ?? 'Not announced'}</dd>
                     </div>
                   </dl>
 

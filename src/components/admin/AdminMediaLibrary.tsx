@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import {
   deleteMediaAssetSafely,
   saveCompressedPhotoAsset,
@@ -10,6 +10,7 @@ import {
   estimateMediaQuotaUsage,
   parseYouTubeVideoUrl,
 } from '../../utils/mediaLibrary';
+import { extractReadableErrorMessage } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 export function AdminMediaLibrary({
@@ -24,7 +25,10 @@ export function AdminMediaLibrary({
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [ytInput, setYtInput] = useState('');
   const [ytTitle, setYtTitle] = useState('');
+  const [ytCredit, setYtCredit] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const pendingPhotoIdRef = useRef<string | null>(null);
 
   const [photoPreview, setPhotoPreview] = useState<{
     dataUrl: string;
@@ -34,6 +38,21 @@ export function AdminMediaLibrary({
     height: number;
     sizeBytes: number;
   } | null>(null);
+
+  function resetPhotoForm() {
+    pendingPhotoIdRef.current = null;
+    setReplacingId(null);
+    setPhotoPreview(null);
+    setCredit('');
+    setCaption('');
+    setRightsConfirmed(false);
+  }
+
+  function resetYouTubeForm() {
+    setYtInput('');
+    setYtTitle('');
+    setYtCredit('');
+  }
 
   const quota = estimateMediaQuotaUsage(data.media);
   const parsedYt = parseYouTubeVideoUrl(ytInput);
@@ -60,6 +79,7 @@ export function AdminMediaLibrary({
   }
 
   async function handleSavePhoto() {
+    if (busyRef.current) return;
     if (!photoPreview) {
       onNotify({ tone: 'err', text: 'Select a photograph first.' });
       return;
@@ -68,9 +88,13 @@ export function AdminMediaLibrary({
       onNotify({ tone: 'err', text: 'Enter credit and confirm usage rights before saving.' });
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
-      const targetId = replacingId || `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      if (!replacingId && !pendingPhotoIdRef.current) {
+        pendingPhotoIdRef.current = `img_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      }
+      const targetId = replacingId || pendingPhotoIdRef.current!;
       const existing = replacingId ? data.media.find((m) => m.id === replacingId) : undefined;
       await saveCompressedPhotoAsset({
         mediaId: targetId,
@@ -88,6 +112,7 @@ export function AdminMediaLibrary({
         associatedArticleIds: existing?.associatedArticleIds ?? [],
         isUpdate: Boolean(replacingId),
       });
+      pendingPhotoIdRef.current = null;
       setPhotoPreview(null);
       setCredit('');
       setCaption('');
@@ -100,17 +125,20 @@ export function AdminMediaLibrary({
         text: replacingId ? 'Replaced photograph in Media Library.' : 'Added compressed photograph to Media Library.',
       });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Failed to save photo.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Failed to save photo.') });
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function handleSaveYouTube() {
+    if (busyRef.current) return;
     if (!parsedYt) {
       onNotify({ tone: 'err', text: 'Enter a valid YouTube link or video ID.' });
       return;
     }
+    busyRef.current = true;
     setBusy(true);
     try {
       await saveYouTubeMediaAsset({
@@ -118,24 +146,25 @@ export function AdminMediaLibrary({
         youtubeUrl: parsedYt.canonicalUrl,
         youtubeVideoId: parsedYt.videoId,
         title: ytTitle.trim() || `YouTube Report (${parsedYt.videoId})`,
-        credit: credit.trim() || 'SakarBazaar YouTube Channel',
+        credit: ytCredit.trim() || 'SakarBazaar YouTube Channel',
         usageRightsConfirmed: true,
         isPublic: false,
       });
-      setYtInput('');
-      setYtTitle('');
-      setCredit('');
+      resetYouTubeForm();
       setUploadTab('none');
       await onRefresh();
       onNotify({ tone: 'ok', text: `Saved YouTube video ${parsedYt.videoId} to Media Library.` });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Failed to save YouTube link.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Failed to save YouTube link.') });
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
 
   async function handleSafeDelete(mediaId: string) {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
       const res = await deleteMediaAssetSafely(mediaId, data.articles);
@@ -144,10 +173,11 @@ export function AdminMediaLibrary({
         return;
       }
       await onRefresh();
-      onNotify({ tone: 'ok', text: 'Unreferenced media asset and payload deleted cleanly.' });
+      onNotify({ tone: 'ok', text: 'Unreferenced media asset deleted cleanly.' });
     } catch (err) {
-      onNotify({ tone: 'err', text: err instanceof Error ? err.message : 'Delete failed.' });
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Delete failed.') });
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   }
@@ -168,7 +198,7 @@ export function AdminMediaLibrary({
               type="button"
               className="btn ghost sb-admin-touch-btn"
               onClick={() => {
-                setReplacingId(null);
+                resetPhotoForm();
                 setUploadTab(uploadTab === 'photo' ? 'none' : 'photo');
               }}
             >
@@ -177,7 +207,10 @@ export function AdminMediaLibrary({
             <button
               type="button"
               className="btn ghost sb-admin-touch-btn"
-              onClick={() => setUploadTab(uploadTab === 'youtube' ? 'none' : 'youtube')}
+              onClick={() => {
+                resetYouTubeForm();
+                setUploadTab(uploadTab === 'youtube' ? 'none' : 'youtube');
+              }}
             >
               + Add YouTube Video
             </button>
@@ -217,7 +250,14 @@ export function AdminMediaLibrary({
               <button type="button" className="btn sb-admin-touch-btn" disabled={busy} onClick={() => void handleSavePhoto()}>
                 Save Photograph
               </button>
-              <button type="button" className="btn ghost sb-admin-touch-btn" onClick={() => { setUploadTab('none'); setReplacingId(null); }}>
+              <button
+                type="button"
+                className="btn ghost sb-admin-touch-btn"
+                onClick={() => {
+                  resetPhotoForm();
+                  setUploadTab('none');
+                }}
+              >
                 Cancel
               </button>
             </div>
@@ -239,7 +279,7 @@ export function AdminMediaLibrary({
             </div>
             <label className="sb-form-field">
               <span>Channel / Source Credit</span>
-              <input type="text" value={credit} onChange={(e) => setCredit(e.target.value)} placeholder="SakarBazaar YouTube" />
+              <input type="text" value={ytCredit} onChange={(e) => setYtCredit(e.target.value)} placeholder="SakarBazaar YouTube" />
             </label>
             {parsedYt && (
               <div className="sb-admin-media-preview-box" style={{ marginBottom: '10px' }}>
@@ -251,7 +291,14 @@ export function AdminMediaLibrary({
               <button type="button" className="btn sb-admin-touch-btn" disabled={busy} onClick={() => void handleSaveYouTube()}>
                 Save YouTube Entry
               </button>
-              <button type="button" className="btn ghost sb-admin-touch-btn" onClick={() => setUploadTab('none')}>
+              <button
+                type="button"
+                className="btn ghost sb-admin-touch-btn"
+                onClick={() => {
+                  resetYouTubeForm();
+                  setUploadTab('none');
+                }}
+              >
                 Cancel
               </button>
             </div>
@@ -285,6 +332,7 @@ export function AdminMediaLibrary({
                         type="button"
                         className="btn ghost"
                         onClick={() => {
+                          setPhotoPreview(null);
                           setReplacingId(m.id);
                           setCredit(m.credit || '');
                           setCaption(m.captions || '');

@@ -32,7 +32,7 @@ export function IpoDeskSidebar({ records }: IpoDeskSidebarProps) {
           <span>
             {item.company}
             <small>
-              {item.priceBand ?? 'Price band TBD'} · {item.issueSize ?? 'Size TBD'}
+              {item.priceBand ?? 'Price band: Not announced'} · {item.issueSize ?? 'Issue size: Not announced'}
             </small>
           </span>
           <span className="tag c">

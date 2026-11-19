@@ -109,7 +109,7 @@ export function WatchlistPage() {
                         {ipo.company}
                       </Link>
                       <small style={{ display: 'block', color: 'var(--muted)' }}>
-                        {ipo.priceBand ?? 'Price band TBD'} · {ipo.issueSize ?? 'Size TBD'}
+                        {ipo.priceBand ?? 'Price band: Not announced'} · {ipo.issueSize ?? 'Issue size: Not announced'}
                       </small>
                     </div>
                     <button

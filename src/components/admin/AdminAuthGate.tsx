@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { User } from 'firebase/auth';
+import type { SessionRefreshResult } from '../../context/SakarBazaarContext';
 import type { AdminRole } from '../../types/sakarbazaar';
 
 interface AdminAuthGateProps {
@@ -10,7 +12,7 @@ interface AdminAuthGateProps {
   authError: string | null;
   onSignIn: () => Promise<void>;
   onSignOut: () => Promise<void>;
-  onRefreshToken: () => Promise<void>;
+  onRefreshToken: () => Promise<SessionRefreshResult>;
 }
 
 export function AdminAuthGate({
@@ -23,6 +25,29 @@ export function AdminAuthGate({
   onSignOut,
   onRefreshToken,
 }: AdminAuthGateProps) {
+  const [checking, setChecking] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
+
+  async function handleRecheckAccess() {
+    if (checking) return;
+    setChecking(true);
+    setRefreshMsg(null);
+    try {
+      const res = await onRefreshToken();
+      setRefreshMsg({
+        text: res.message,
+        tone: res.ok ? 'ok' : 'err',
+      });
+    } catch (err) {
+      setRefreshMsg({
+        text: err instanceof Error ? err.message : 'Unable to refresh authentication status.',
+        tone: 'err',
+      });
+    } finally {
+      setChecking(false);
+    }
+  }
+
   if (!authReady) {
     return (
       <main id="top" className="wrap sb-page">
@@ -52,9 +77,13 @@ export function AdminAuthGate({
             featured placement, paid disclosures, and the verified IPO Intelligence desk.
           </p>
 
-          {authError && (
-            <div className="sb-admin-alert err" role="alert" style={{ marginBottom: '14px' }}>
-              {authError}
+          {(authError || refreshMsg) && (
+            <div
+              className={`sb-admin-alert ${refreshMsg?.tone || 'err'}`}
+              role="alert"
+              style={{ marginBottom: '14px' }}
+            >
+              {refreshMsg?.text || authError}
             </div>
           )}
 
@@ -100,13 +129,24 @@ export function AdminAuthGate({
             session or sign in again.
           </p>
 
+          {(refreshMsg || authError) && (
+            <div
+              className={`sb-admin-alert ${refreshMsg?.tone || 'err'}`}
+              role="status"
+              style={{ marginBottom: '14px' }}
+            >
+              {refreshMsg?.text || authError}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn ghost sb-admin-touch-btn"
-              onClick={() => void onRefreshToken()}
+              disabled={checking}
+              onClick={() => void handleRecheckAccess()}
             >
-              Re-check Access
+              {checking ? 'Checking Access…' : 'Re-check Access'}
             </button>
             <button
               type="button"

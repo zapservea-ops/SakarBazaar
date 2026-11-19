@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminAuditHistory } from '../components/admin/AdminAuditHistory';
 import { AdminAuthGate } from '../components/admin/AdminAuthGate';
 import { AdminDashboardOverview } from '../components/admin/AdminDashboardOverview';
@@ -31,6 +31,7 @@ import {
   sweepExpiredPublishedArticles,
 } from '../lib/firebase';
 import type { StoredArticleDoc } from '../types/sakarbazaar';
+import { extractReadableErrorMessage } from '../utils/newsLifecycle';
 
 const DEFAULT_WORKSPACE: AdminWorkspaceData = {
   articles: [],
@@ -69,16 +70,24 @@ export function AdminPage() {
   const [section, setSection] = useState<AdminSectionKey>('dashboard');
   const [workspace, setWorkspace] = useState<AdminWorkspaceData>(DEFAULT_WORKSPACE);
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
+  const [refreshingSession, setRefreshingSession] = useState(false);
   const [editingArticle, setEditingArticle] = useState<StoredArticleDoc | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
+  const loadingWorkspaceRef = useRef(false);
+  const refreshingSessionRef = useRef(false);
 
   useEffect(() => {
     document.title = 'SakarBazaar Admin · Private Newsroom & Intelligence';
   }, []);
 
-  const loadWorkspace = useCallback(async () => {
-    if (!isAuthorizedEditor || adminRole === 'none') return;
+  const handlePublicContentChanged = useCallback(async () => {
+    await Promise.all([refreshArticles(), refreshIpos()]);
+  }, [refreshArticles, refreshIpos]);
+
+  const loadWorkspace = useCallback(async (opts?: { manual?: boolean }) => {
+    if (!isAuthorizedEditor || adminRole === 'none' || loadingWorkspaceRef.current) return;
+    loadingWorkspaceRef.current = true;
     setLoadingWorkspace(true);
     try {
       const [
@@ -102,18 +111,16 @@ export function AdminPage() {
       // Automatically transition elapsed expired Published articles to Expired & sync media visibility
       const swept = await sweepExpiredPublishedArticles(articlesRaw);
       const articles = swept > 0 ? await fetchAllStoredArticles() : articlesRaw;
-      if (swept > 0) {
-        await refreshArticles();
+      if (swept > 0 || opts?.manual) {
+        await handlePublicContentChanged();
       }
 
-      let authorizedEmails = workspace.authorizedEmails;
-      let adminUsers = workspace.adminUsers;
-      if (permissions.canManagePermissionsAndSecurity) {
-        [authorizedEmails, adminUsers] = await Promise.all([
-          fetchAuthorizedEmails().catch(() => []),
-          fetchAdminUsers().catch(() => []),
-        ]);
-      }
+      const [authorizedEmails, adminUsers] = permissions.canManagePermissionsAndSecurity
+        ? await Promise.all([
+            fetchAuthorizedEmails().catch(() => []),
+            fetchAdminUsers().catch(() => []),
+          ])
+        : [[], []];
 
       setWorkspace({
         articles,
@@ -127,15 +134,23 @@ export function AdminPage() {
         adminUsers,
         systemSettings,
       });
+
+      if (opts?.manual) {
+        setBanner({
+          tone: 'ok',
+          text: `Workspace data refreshed from Firestore (${articles.length} articles, ${ipos.length} IPOs, ${ipoReviews.length} IPO reviews${swept > 0 ? `, swept ${swept} expired` : ''}).`,
+        });
+      }
     } catch (err) {
       setBanner({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to load admin workspace collections.',
+        text: extractReadableErrorMessage(err, 'Unable to load admin workspace collections.'),
       });
     } finally {
+      loadingWorkspaceRef.current = false;
       setLoadingWorkspace(false);
     }
-  }, [isAuthorizedEditor, adminRole, permissions.canManagePermissionsAndSecurity, refreshArticles]);
+  }, [isAuthorizedEditor, adminRole, permissions.canManagePermissionsAndSecurity, handlePublicContentChanged]);
 
   useEffect(() => {
     if (isAuthorizedEditor && adminRole !== 'none') {
@@ -143,8 +158,27 @@ export function AdminPage() {
     }
   }, [isAuthorizedEditor, adminRole, loadWorkspace]);
 
-  async function handlePublicContentChanged() {
-    await Promise.all([refreshArticles(), refreshIpos()]);
+  async function handleRefreshSessionClick() {
+    if (refreshingSessionRef.current || refreshingSession) return;
+    refreshingSessionRef.current = true;
+    setRefreshingSession(true);
+    setAuthError(null);
+    try {
+      const res = await refreshAuthSession();
+      if (res.ok) {
+        setBanner({ tone: 'ok', text: res.message });
+      } else {
+        setAuthError(res.message);
+        setBanner({ tone: 'err', text: res.message });
+      }
+    } catch (err) {
+      const msg = extractReadableErrorMessage(err, 'Unable to refresh authentication session.');
+      setAuthError(msg);
+      setBanner({ tone: 'err', text: msg });
+    } finally {
+      refreshingSessionRef.current = false;
+      setRefreshingSession(false);
+    }
   }
 
   async function handleSignInClick() {
@@ -238,16 +272,17 @@ export function AdminPage() {
             type="button"
             className="btn ghost sb-admin-touch-btn"
             disabled={loadingWorkspace}
-            onClick={() => void loadWorkspace()}
+            onClick={() => void loadWorkspace({ manual: true })}
           >
             {loadingWorkspace ? 'Refreshing…' : 'Refresh Data'}
           </button>
           <button
             type="button"
             className="btn ghost sb-admin-touch-btn"
-            onClick={() => void refreshAuthSession()}
+            disabled={refreshingSession}
+            onClick={() => void handleRefreshSessionClick()}
           >
-            Refresh Session
+            {refreshingSession ? 'Checking Session…' : 'Refresh Session'}
           </button>
           <button
             type="button"

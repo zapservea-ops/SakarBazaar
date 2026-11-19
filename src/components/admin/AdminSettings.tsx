@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
   exportFullBackupBundle,
   restoreBackupBundleToFirestore,
@@ -6,13 +6,19 @@ import {
   updateAdminUserRole,
   upsertAuthorizedEmail,
 } from '../../lib/firebase';
-import type { DurationPreset, SakarBazaarBackupBundle } from '../../types/sakarbazaar';
+import type {
+  AdminUserRecord,
+  AuthorizedEmailRecord,
+  DurationPreset,
+  SakarBazaarBackupBundle,
+} from '../../types/sakarbazaar';
 import {
   BOOTSTRAPPED_OWNER_EMAIL,
   isValidOperatorEmail,
   normalizeEmailKey,
 } from '../../utils/adminPermissions';
 import { validateBackupBundle, type BackupValidationReport } from '../../utils/backupRestore';
+import { extractReadableErrorMessage } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 interface AdminSettingsProps extends AdminSectionBaseProps {
@@ -44,6 +50,17 @@ export function AdminSettings({
     data.systemSettings.maxImageSizeBytes || 180_000,
   );
   const [savingSettings, setSavingSettings] = useState(false);
+  const [busyOperatorKey, setBusyOperatorKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDefaultPreset(data.systemSettings.defaultDurationPreset || '15d');
+    setExpiringHours(data.systemSettings.expiringSoonThresholdHours || 48);
+    setMaxImgBytes(data.systemSettings.maxImageSizeBytes || 180_000);
+  }, [
+    data.systemSettings.defaultDurationPreset,
+    data.systemSettings.expiringSoonThresholdHours,
+    data.systemSettings.maxImageSizeBytes,
+  ]);
 
   // Backup Export & Restore
   const [exporting, setExporting] = useState(false);
@@ -52,8 +69,11 @@ export function AdminSettings({
   );
   const [validationReport, setValidationReport] = useState<BackupValidationReport | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const actionLocksRef = useRef<Record<string, boolean>>({});
 
   async function handleExportBackup() {
+    if (actionLocksRef.current.export) return;
+    actionLocksRef.current.export = true;
     setExporting(true);
     try {
       const bundle = await exportFullBackupBundle(adminRole);
@@ -78,6 +98,7 @@ export function AdminSettings({
         text: err instanceof Error ? err.message : 'Backup export failed.',
       });
     } finally {
+      actionLocksRef.current.export = false;
       setExporting(false);
     }
   }
@@ -111,7 +132,8 @@ export function AdminSettings({
   }
 
   async function handleApplyRestore() {
-    if (!permissions.canRestoreBackup || !pendingRestoreBundle) return;
+    if (actionLocksRef.current.restore || !permissions.canRestoreBackup || !pendingRestoreBundle) return;
+    actionLocksRef.current.restore = true;
     setRestoring(true);
     try {
       const res = await restoreBackupBundleToFirestore(pendingRestoreBundle);
@@ -129,12 +151,13 @@ export function AdminSettings({
         text: err instanceof Error ? err.message : 'Restore failed.',
       });
     } finally {
+      actionLocksRef.current.restore = false;
       setRestoring(false);
     }
   }
 
   async function handleAddAuthorizedEmail() {
-    if (!permissions.canManagePermissionsAndSecurity) return;
+    if (actionLocksRef.current.email || !permissions.canManagePermissionsAndSecurity) return;
     const emailLower = normalizeEmailKey(newEmail);
     if (!isValidOperatorEmail(emailLower)) {
       onNotify({ tone: 'err', text: 'Enter a valid Google email address.' });
@@ -144,6 +167,7 @@ export function AdminSettings({
       onNotify({ tone: 'err', text: 'Enter a display name (e.g. Father / Publisher).' });
       return;
     }
+    actionLocksRef.current.email = true;
     setSavingEmail(true);
     try {
       const exists = data.authorizedEmails.some((item) => item.id === emailLower);
@@ -154,6 +178,12 @@ export function AdminSettings({
         active: true,
         isNew: !exists,
       });
+      const matchingAdmin = data.adminUsers.find(
+        (u) => normalizeEmailKey(u.email) === emailLower && u.role !== newRole,
+      );
+      if (matchingAdmin) {
+        await updateAdminUserRole(matchingAdmin, newRole);
+      }
       setNewEmail('');
       setNewDisplayName('');
       await onRefresh();
@@ -164,12 +194,14 @@ export function AdminSettings({
         text: err instanceof Error ? err.message : 'Unable to save authorized Google email.',
       });
     } finally {
+      actionLocksRef.current.email = false;
       setSavingEmail(false);
     }
   }
 
   async function handleSaveSystemSettings() {
-    if (!permissions.canManagePermissionsAndSecurity) return;
+    if (actionLocksRef.current.settings || !permissions.canManagePermissionsAndSecurity) return;
+    actionLocksRef.current.settings = true;
     setSavingSettings(true);
     try {
       await saveSystemSettings({
@@ -183,10 +215,70 @@ export function AdminSettings({
     } catch (err) {
       onNotify({
         tone: 'err',
-        text: err instanceof Error ? err.message : 'Unable to save settings.',
+        text: extractReadableErrorMessage(err, 'Unable to save settings.'),
       });
     } finally {
+      actionLocksRef.current.settings = false;
       setSavingSettings(false);
+    }
+  }
+
+  async function handleToggleEmailActive(item: AuthorizedEmailRecord) {
+    if (actionLocksRef.current.operator || !permissions.canManagePermissionsAndSecurity || busyOperatorKey) return;
+    actionLocksRef.current.operator = true;
+    setBusyOperatorKey(item.id);
+    try {
+      await upsertAuthorizedEmail({
+        email: item.email,
+        displayName: item.displayName,
+        role: item.role,
+        active: !item.active,
+        isNew: false,
+      });
+      await onRefresh();
+      onNotify({
+        tone: 'ok',
+        text: `${item.active ? 'Disabled access for' : 'Re-enabled'} ${item.email}.`,
+      });
+    } catch (err) {
+      onNotify({
+        tone: 'err',
+        text: extractReadableErrorMessage(err, 'Unable to update operator access.'),
+      });
+    } finally {
+      actionLocksRef.current.operator = false;
+      setBusyOperatorKey(null);
+    }
+  }
+
+  async function handleSwitchAdminRole(usr: AdminUserRecord) {
+    if (actionLocksRef.current.operator || !permissions.canManagePermissionsAndSecurity || busyOperatorKey) return;
+    actionLocksRef.current.operator = true;
+    const nextRole = usr.role === 'owner' ? 'publisher' : 'owner';
+    setBusyOperatorKey(usr.uid);
+    try {
+      await updateAdminUserRole(usr, nextRole);
+      const emailLower = normalizeEmailKey(usr.email);
+      const matchingAllow = data.authorizedEmails.find((item) => item.id === emailLower);
+      if (matchingAllow && matchingAllow.role !== nextRole) {
+        await upsertAuthorizedEmail({
+          email: matchingAllow.email,
+          displayName: matchingAllow.displayName,
+          role: nextRole,
+          active: matchingAllow.active,
+          isNew: false,
+        });
+      }
+      await onRefresh();
+      onNotify({ tone: 'ok', text: `Changed ${usr.email} role to ${nextRole}.` });
+    } catch (err) {
+      onNotify({
+        tone: 'err',
+        text: extractReadableErrorMessage(err, 'Unable to switch operator role.'),
+      });
+    } finally {
+      actionLocksRef.current.operator = false;
+      setBusyOperatorKey(null);
     }
   }
 
@@ -338,22 +430,14 @@ export function AdminSettings({
                       <button
                         type="button"
                         className="btn ghost"
-                        onClick={async () => {
-                          await upsertAuthorizedEmail({
-                            email: item.email,
-                            displayName: item.displayName,
-                            role: item.role,
-                            active: !item.active,
-                            isNew: false,
-                          });
-                          await onRefresh();
-                          onNotify({
-                            tone: 'ok',
-                            text: `${item.active ? 'Disabled' : 'Re-enabled'} ${item.email}.`,
-                          });
-                        }}
+                        disabled={busyOperatorKey === item.id}
+                        onClick={() => void handleToggleEmailActive(item)}
                       >
-                        {item.active ? 'Revoke Access' : 'Re-enable'}
+                        {busyOperatorKey === item.id
+                          ? 'Updating…'
+                          : item.active
+                            ? 'Revoke Access'
+                            : 'Re-enable'}
                       </button>
                     )}
                   </div>
@@ -375,14 +459,12 @@ export function AdminSettings({
                         <button
                           type="button"
                           className="btn ghost"
-                          onClick={async () => {
-                            const nextRole = usr.role === 'owner' ? 'publisher' : 'owner';
-                            await updateAdminUserRole(usr, nextRole);
-                            await onRefresh();
-                            onNotify({ tone: 'ok', text: `Changed ${usr.email} role to ${nextRole}.` });
-                          }}
+                          disabled={busyOperatorKey === usr.uid}
+                          onClick={() => void handleSwitchAdminRole(usr)}
                         >
-                          Switch to {usr.role === 'owner' ? 'Publisher' : 'Owner'}
+                          {busyOperatorKey === usr.uid
+                            ? 'Updating…'
+                            : `Switch to ${usr.role === 'owner' ? 'Publisher' : 'Owner'}`}
                         </button>
                       )}
                     </div>

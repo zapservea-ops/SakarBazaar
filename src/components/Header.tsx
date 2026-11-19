@@ -2,7 +2,7 @@ import { Menu, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
-import { EXPLAINERS_CATALOG, IPO_ALL_RECORDS } from '../data/sampleData';
+import { EXPLAINERS_CATALOG } from '../data/sampleData';
 import { getSearchSuggestions } from '../utils/marketFormat';
 
 export function Header() {
@@ -17,6 +17,7 @@ export function Header() {
     desktopSearchRef,
     mobileSearchRef,
     articlesCatalog,
+    ipoRecords,
     allMarketInstruments,
     setSearchTerm,
     setMobileSearchOpen,
@@ -37,12 +38,12 @@ export function Header() {
     return getSearchSuggestions(
       searchTerm,
       articlesCatalog,
-      IPO_ALL_RECORDS,
+      ipoRecords,
       EXPLAINERS_CATALOG,
       allMarketInstruments,
       6,
     );
-  }, [searchTerm, articlesCatalog, allMarketInstruments]);
+  }, [searchTerm, articlesCatalog, ipoRecords, allMarketInstruments]);
 
   useEffect(() => {
     setDrawerOpen(false);

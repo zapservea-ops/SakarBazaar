@@ -112,22 +112,29 @@ async function isAuthorizedNewsroomEditor(
     return true;
   }
   try {
-    const docUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents/admins/${encodeURIComponent(uid)}`;
-    const res = await fetch(docUrl, {
-      headers: { Authorization: `Bearer ${idToken}` },
-    });
-    if (res.ok) return true;
-
     const emailKey = email.trim().toLowerCase();
     const allowlistUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents/authorizedEmails/${encodeURIComponent(emailKey)}`;
     const allowRes = await fetch(allowlistUrl, {
       headers: { Authorization: `Bearer ${idToken}` },
     });
-    if (!allowRes.ok) return false;
-    const allowDoc = (await allowRes.json()) as {
-      fields?: { active?: { booleanValue?: boolean } };
-    };
-    return Boolean(allowDoc.fields?.active?.booleanValue);
+    if (allowRes.ok) {
+      const allowDoc = (await allowRes.json()) as {
+        fields?: { active?: { booleanValue?: boolean } };
+      };
+      // If an allowlist record exists and has active === false, access is explicitly revoked.
+      if (allowDoc.fields?.active?.booleanValue === false) {
+        return false;
+      }
+      if (allowDoc.fields?.active?.booleanValue === true) {
+        return true;
+      }
+    }
+
+    const docUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents/admins/${encodeURIComponent(uid)}`;
+    const res = await fetch(docUrl, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    return res.ok;
   } catch {
     return false;
   }
@@ -152,6 +159,7 @@ async function startServer() {
     res.json({
       ok: true,
       service: 'sakarbazaar',
+      serverTimeMs: Date.now(),
       marketData: marketMeta,
     });
   });
