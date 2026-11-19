@@ -258,17 +258,22 @@ export function canDeleteIpoInFirestore(
   if (!isValidFirestoreDocId(ipoId)) return false;
   if (!isPolicyAuthorizedUser(auth)) return false;
   if (isPolicyPublicIpo(ipo)) return false;
+  if (ipo.deletionStatus === 'deleted' || ipo.status === 'Deleted') return false;
+  if (ipo.deletionStatus === 'pending_approval') return false;
+  if (ipo.status === 'Pending Deletion' && ipo.deletionStatus !== 'approved') return false;
   return (
+    ipo.deletionStatus === 'approved' ||
     ipo.isArchived === true ||
     ipo.status === 'Archived' ||
     ipo.status === 'Unpublished' ||
     ipo.status === 'Awaiting Verification' ||
-    ipo.status === 'Pending Deletion' ||
-    ipo.deletionStatus === 'pending_approval' ||
-    ipo.deletionStatus === 'approved' ||
+    ipo.status === 'Draft' ||
+    ipo.status === 'Rejected' ||
     ipo.verificationStatus === 'archived' ||
     ipo.verificationStatus === 'unpublished' ||
-    ipo.verificationStatus === 'awaiting_verification'
+    ipo.verificationStatus === 'awaiting_verification' ||
+    ipo.verificationStatus === 'rejected' ||
+    ipo.verificationStatus === 'proposed'
   );
 }
 

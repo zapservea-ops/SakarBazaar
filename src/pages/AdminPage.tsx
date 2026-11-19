@@ -28,10 +28,15 @@ import {
   fetchPaidCampaigns,
   fetchRecentAuditLogs,
   fetchSystemSettings,
+  subscribeToAdminOperationalCollections,
   sweepExpiredPublishedArticles,
 } from '../lib/firebase';
 import type { StoredArticleDoc } from '../types/sakarbazaar';
 import { extractReadableErrorMessage, isArticleInDeletionQueue } from '../utils/newsLifecycle';
+import {
+  createTabSessionId,
+  publishWorkspaceSyncSignal,
+} from '../utils/workspaceSync';
 
 const DEFAULT_WORKSPACE: AdminWorkspaceData = {
   articles: [],
@@ -76,6 +81,8 @@ export function AdminPage() {
   const [banner, setBanner] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
   const loadingWorkspaceRef = useRef(false);
   const refreshingSessionRef = useRef(false);
+  const tabSessionIdRef = useRef<string>(createTabSessionId());
+  const hasSweptInitialExpiredRef = useRef(false);
 
   useEffect(() => {
     document.title = 'SakarBazaar Admin · Private Newsroom & Intelligence';
@@ -83,6 +90,11 @@ export function AdminPage() {
 
   const handlePublicContentChanged = useCallback(async () => {
     await Promise.all([refreshArticles(), refreshIpos()]);
+    publishWorkspaceSyncSignal(
+      ['articles', 'ipos', 'legacyOverrides'],
+      tabSessionIdRef.current,
+      'admin_mutation',
+    );
   }, [refreshArticles, refreshIpos]);
 
   const loadWorkspace = useCallback(async (opts?: { manual?: boolean }) => {
@@ -153,10 +165,48 @@ export function AdminPage() {
   }, [isAuthorizedEditor, adminRole, permissions.canManagePermissionsAndSecurity, handlePublicContentChanged]);
 
   useEffect(() => {
-    if (isAuthorizedEditor && adminRole !== 'none') {
-      void loadWorkspace();
+    if (!isAuthorizedEditor || adminRole === 'none') {
+      hasSweptInitialExpiredRef.current = false;
+      return;
     }
-  }, [isAuthorizedEditor, adminRole, loadWorkspace]);
+
+    // Load secondary non-subscribed admin collections & security allowlists
+    void loadWorkspace();
+
+    // Attach targeted authenticated Admin-only real-time listeners for operational collections
+    const unsubscribe = subscribeToAdminOperationalCollections(
+      {
+        onArticles: (articles) => {
+          setWorkspace((prev) => ({ ...prev, articles }));
+          if (!hasSweptInitialExpiredRef.current && articles.length > 0) {
+            hasSweptInitialExpiredRef.current = true;
+            void sweepExpiredPublishedArticles(articles).then((swept) => {
+              if (swept > 0) {
+                void handlePublicContentChanged();
+              }
+            });
+          }
+        },
+        onIpos: (ipos) => {
+          setWorkspace((prev) => ({ ...prev, ipos }));
+        },
+        onIpoReviews: (ipoReviews) => {
+          setWorkspace((prev) => ({ ...prev, ipoReviews }));
+        },
+        onAuditLogs: (auditLogs) => {
+          setWorkspace((prev) => ({ ...prev, auditLogs }));
+        },
+        onError: (collectionName, err) => {
+          console.warn(`Admin realtime listener error (${collectionName}):`, err);
+        },
+      },
+      { auditLogLimit: 80 },
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [isAuthorizedEditor, adminRole, loadWorkspace, handlePublicContentChanged]);
 
   async function handleRefreshSessionClick() {
     if (refreshingSessionRef.current || refreshingSession) return;

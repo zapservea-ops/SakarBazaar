@@ -230,9 +230,23 @@ service cloud.firestore {
 
     function isPublicIpo(data) {
       return data.verificationStatus == 'verified' &&
-        data.isArchived == false &&
-        data.deletionStatus == 'none' &&
+        ('isArchived' in data && data.isArchived == false) &&
+        ('deletionStatus' in data && data.deletionStatus == 'none') &&
         data.status in ['Upcoming', 'Open', 'Closed', 'Listed'];
+    }
+
+    function isEligibleForIpoDeletion(data) {
+      return !isPublicIpo(data) &&
+        !('deletionStatus' in data && data.deletionStatus == 'deleted') &&
+        data.status != 'Deleted' &&
+        !('deletionStatus' in data && data.deletionStatus == 'pending_approval') &&
+        !(data.status == 'Pending Deletion' && (!('deletionStatus' in data) || data.deletionStatus != 'approved')) &&
+        (
+          ('deletionStatus' in data && data.deletionStatus == 'approved') ||
+          ('isArchived' in data && data.isArchived == true) ||
+          data.status in ['Archived', 'Unpublished', 'Awaiting Verification', 'Draft', 'Rejected'] ||
+          data.verificationStatus in ['archived', 'unpublished', 'awaiting_verification', 'rejected', 'proposed']
+        );
     }
 
     function isValidIpoSourceReview(data) {
@@ -507,13 +521,7 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         incoming().updatedByUid == request.auth.uid;
       allow delete: if isValidId(ipoId) && isAuthorizedUser() &&
-        !isPublicIpo(existing()) &&
-        (
-          existing().isArchived == true ||
-          existing().status in ['Archived', 'Unpublished', 'Awaiting Verification', 'Pending Deletion'] ||
-          existing().deletionStatus in ['pending_approval', 'approved'] ||
-          existing().verificationStatus in ['archived', 'unpublished', 'awaiting_verification']
-        );
+        isEligibleForIpoDeletion(existing());
     }
 
     match /ipoSourceReviews/{reviewId} {

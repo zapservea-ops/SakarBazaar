@@ -1208,3 +1208,452 @@ export function assertReviewPendingResolution(
     );
   }
 }
+
+const PUBLIC_LIVE_IPO_STATUSES = new Set(['Upcoming', 'Open', 'Closed', 'Listed']);
+const KNOWN_IPO_STATUSES = new Set([
+  'Awaiting Verification',
+  'Draft',
+  'Rejected',
+  'Proposed OFS',
+  'Upcoming',
+  'Open',
+  'Closed',
+  'Listed',
+  'Archived',
+  'Unpublished',
+  'Pending Deletion',
+  'Deleted',
+]);
+const KNOWN_IPO_VERIFICATION_STATUSES = new Set([
+  'awaiting_verification',
+  'verified',
+  'unpublished',
+  'archived',
+  'rejected',
+  'proposed',
+]);
+const KNOWN_IPO_DELETION_STATUSES = new Set([
+  'none',
+  'pending_approval',
+  'approved',
+  'deleted',
+]);
+
+export interface IpoDeletionEligibility {
+  isPublic: boolean;
+  isIncompleteLegacyRecord: boolean;
+  requiresApprovalFirst: boolean;
+  alreadyDeleted: boolean;
+  canRequestDeletion: boolean;
+  canApproveDeletion: boolean;
+  canDeletePermanently: boolean;
+  categoryLabel:
+    | 'Public Live'
+    | 'Legacy Incomplete Verified'
+    | 'Deleted'
+    | 'Pending Approval'
+    | 'Approved For Deletion'
+    | 'Archived'
+    | 'Unpublished'
+    | 'Draft / Awaiting Verification'
+    | 'Rejected'
+    | 'Non-Public';
+  reason: string;
+}
+
+/**
+ * Canonical IPO permanent deletion eligibility classifier with strict parity against
+ * `isEligibleForIpoDeletion(existing())` in firestore.rules:
+ * - Public IPOs (verified + isArchived === false + deletionStatus === 'none' + Upcoming/Open/Closed/Listed) cannot be deleted directly.
+ * - `pending_approval` and `Pending Deletion` without `deletionStatus === 'approved'` CANNOT bypass deletion approval.
+ * - `deleted` / `'Deleted'` terminal states cannot be deleted again.
+ * - Eligible non-public records (`approved`, archived, unpublished, Draft, Awaiting Verification, Rejected, Proposed) are deletable by both Owner and Publisher.
+ */
+export function classifyIpoDeletionEligibility(ipo: {
+  id?: string;
+  verificationStatus?: string;
+  status?: string;
+  isArchived?: boolean;
+  deletionStatus?: string;
+}): IpoDeletionEligibility {
+  const status = String(ipo.status ?? '');
+  const verificationStatus = String(ipo.verificationStatus ?? '');
+  const hasIsArchivedBool = typeof ipo.isArchived === 'boolean';
+  const hasDeletionStatusStr =
+    typeof ipo.deletionStatus === 'string' && ipo.deletionStatus.length > 0;
+  const deletionStatus = hasDeletionStatusStr ? String(ipo.deletionStatus) : undefined;
+
+  const isPublicRule =
+    verificationStatus === 'verified' &&
+    ipo.isArchived === false &&
+    deletionStatus === 'none' &&
+    PUBLIC_LIVE_IPO_STATUSES.has(status);
+
+  if (deletionStatus === 'deleted' || status === 'Deleted') {
+    return {
+      isPublic: false,
+      isIncompleteLegacyRecord: false,
+      requiresApprovalFirst: false,
+      alreadyDeleted: true,
+      canRequestDeletion: false,
+      canApproveDeletion: false,
+      canDeletePermanently: false,
+      categoryLabel: 'Deleted',
+      reason: 'IPO record is already in terminal Deleted state.',
+    };
+  }
+
+  if (isPublicRule) {
+    return {
+      isPublic: true,
+      isIncompleteLegacyRecord: false,
+      requiresApprovalFirst: false,
+      alreadyDeleted: false,
+      canRequestDeletion: true,
+      canApproveDeletion: false,
+      canDeletePermanently: false,
+      categoryLabel: 'Public Live',
+      reason: 'Public IPOs cannot be deleted directly. Archive, Unpublish, or mark Pending Deletion first.',
+    };
+  }
+
+  if (
+    deletionStatus === 'pending_approval' ||
+    (status === 'Pending Deletion' && deletionStatus !== 'approved')
+  ) {
+    return {
+      isPublic: false,
+      isIncompleteLegacyRecord: false,
+      requiresApprovalFirst: true,
+      alreadyDeleted: false,
+      canRequestDeletion: false,
+      canApproveDeletion: true,
+      canDeletePermanently: false,
+      categoryLabel: 'Pending Approval',
+      reason: 'Awaiting explicit Owner/Publisher approval ("Approve Deletion") before permanent deletion.',
+    };
+  }
+
+  const eligibleByRules =
+    deletionStatus === 'approved' ||
+    ipo.isArchived === true ||
+    status === 'Archived' ||
+    status === 'Unpublished' ||
+    status === 'Awaiting Verification' ||
+    status === 'Draft' ||
+    status === 'Rejected' ||
+    verificationStatus === 'archived' ||
+    verificationStatus === 'unpublished' ||
+    verificationStatus === 'awaiting_verification' ||
+    verificationStatus === 'rejected' ||
+    verificationStatus === 'proposed';
+
+  if (!eligibleByRules) {
+    const incompleteVerified =
+      verificationStatus === 'verified' && (!hasIsArchivedBool || !hasDeletionStatusStr);
+    return {
+      isPublic: isIpoPubliclyVisible(ipo),
+      isIncompleteLegacyRecord: incompleteVerified,
+      requiresApprovalFirst: false,
+      alreadyDeleted: false,
+      canRequestDeletion: true,
+      canApproveDeletion: false,
+      canDeletePermanently: false,
+      categoryLabel: incompleteVerified ? 'Legacy Incomplete Verified' : 'Non-Public',
+      reason: incompleteVerified
+        ? 'Legacy verified IPO lacks explicit isArchived/deletionStatus defaults. Archive, Unpublish, or mark Pending Deletion & Approve before deleting.'
+        : 'Record does not meet non-public deletion eligibility criteria.',
+    };
+  }
+
+  let categoryLabel: IpoDeletionEligibility['categoryLabel'] = 'Non-Public';
+  if (deletionStatus === 'approved') {
+    categoryLabel = 'Approved For Deletion';
+  } else if (ipo.isArchived === true || status === 'Archived' || verificationStatus === 'archived') {
+    categoryLabel = 'Archived';
+  } else if (status === 'Unpublished' || verificationStatus === 'unpublished') {
+    categoryLabel = 'Unpublished';
+  } else if (status === 'Rejected' || verificationStatus === 'rejected') {
+    categoryLabel = 'Rejected';
+  } else if (
+    status === 'Draft' ||
+    status === 'Awaiting Verification' ||
+    verificationStatus === 'awaiting_verification' ||
+    verificationStatus === 'proposed'
+  ) {
+    categoryLabel = 'Draft / Awaiting Verification';
+  }
+
+  return {
+    isPublic: false,
+    isIncompleteLegacyRecord: false,
+    requiresApprovalFirst: false,
+    alreadyDeleted: false,
+    canRequestDeletion: deletionStatus !== 'approved',
+    canApproveDeletion: false,
+    canDeletePermanently: true,
+    categoryLabel,
+    reason: 'Eligible non-public IPO record; Owner or Publisher may execute controlled permanent deletion.',
+  };
+}
+
+export interface ProductionIpoSchemaAnomaly {
+  id: string;
+  companyName: string;
+  status: string;
+  verificationStatus: string;
+  isArchived: unknown;
+  deletionStatus: unknown;
+  issues: string[];
+}
+
+export interface ProductionIpoSchemaInventory {
+  totalRecords: number;
+  withIsArchivedCount: number;
+  withDeletionStatusCount: number;
+  missingEitherFieldCount: number;
+  missingIsArchivedIds: string[];
+  missingDeletionStatusIds: string[];
+  missingEitherFieldIds: string[];
+  verifiedLegacy2FilterCount: number;
+  verifiedPublic4FilterCount: number;
+  droppedUnderNewQueryIds: string[];
+  archivedCount: number;
+  unpublishedCount: number;
+  pendingDeletionCount: number;
+  draftOrAwaitingCount: number;
+  rejectedCount: number;
+  deletedCount: number;
+  invalidOrUnknownStatuses: ProductionIpoSchemaAnomaly[];
+}
+
+/**
+ * Pure read-only inventory analyzer for production /ipos documents reporting all schema,
+ * visibility-query compatibility, lifecycle, and anomaly counts without modifying any data.
+ */
+export function buildProductionIpoSchemaInventory(
+  ipos: Array<Partial<ManagedIpoRecord> & { id: string }>,
+): ProductionIpoSchemaInventory {
+  let withIsArchivedCount = 0;
+  let withDeletionStatusCount = 0;
+  const missingIsArchivedIds: string[] = [];
+  const missingDeletionStatusIds: string[] = [];
+  const missingEitherSet = new Set<string>();
+  let verifiedLegacy2FilterCount = 0;
+  let verifiedPublic4FilterCount = 0;
+  const droppedUnderNewQueryIds: string[] = [];
+  let archivedCount = 0;
+  let unpublishedCount = 0;
+  let pendingDeletionCount = 0;
+  let draftOrAwaitingCount = 0;
+  let rejectedCount = 0;
+  let deletedCount = 0;
+  const invalidOrUnknownStatuses: ProductionIpoSchemaAnomaly[] = [];
+
+  for (const raw of ipos) {
+    const id = raw.id;
+    const status = String(raw.status ?? '');
+    const verificationStatus = String(raw.verificationStatus ?? '');
+    const hasIsArchived = typeof raw.isArchived === 'boolean';
+    const hasDeletionStatus =
+      typeof raw.deletionStatus === 'string' && raw.deletionStatus.length > 0;
+
+    if (hasIsArchived) {
+      withIsArchivedCount++;
+    } else {
+      missingIsArchivedIds.push(id);
+      missingEitherSet.add(id);
+    }
+
+    if (hasDeletionStatus) {
+      withDeletionStatusCount++;
+    } else {
+      missingDeletionStatusIds.push(id);
+      missingEitherSet.add(id);
+    }
+
+    const matchesOld2Filter =
+      verificationStatus === 'verified' && PUBLIC_LIVE_IPO_STATUSES.has(status);
+    const matchesNew4Filter =
+      matchesOld2Filter && raw.isArchived === false && raw.deletionStatus === 'none';
+
+    if (matchesOld2Filter) verifiedLegacy2FilterCount++;
+    if (matchesNew4Filter) verifiedPublic4FilterCount++;
+    if (matchesOld2Filter && !matchesNew4Filter) {
+      droppedUnderNewQueryIds.push(id);
+    }
+
+    if (raw.deletionStatus === 'deleted' || status === 'Deleted') {
+      deletedCount++;
+    } else if (
+      raw.deletionStatus === 'pending_approval' ||
+      raw.deletionStatus === 'approved' ||
+      status === 'Pending Deletion'
+    ) {
+      pendingDeletionCount++;
+    } else if (
+      raw.isArchived === true ||
+      status === 'Archived' ||
+      verificationStatus === 'archived'
+    ) {
+      archivedCount++;
+    } else if (status === 'Unpublished' || verificationStatus === 'unpublished') {
+      unpublishedCount++;
+    } else if (status === 'Rejected' || verificationStatus === 'rejected') {
+      rejectedCount++;
+    } else if (
+      status === 'Draft' ||
+      status === 'Awaiting Verification' ||
+      verificationStatus === 'awaiting_verification' ||
+      verificationStatus === 'proposed'
+    ) {
+      draftOrAwaitingCount++;
+    }
+
+    const issues: string[] = [];
+    if (!status || !KNOWN_IPO_STATUSES.has(status)) {
+      issues.push(`Unknown or missing status: "${status || '(empty)'}"`);
+    }
+    if (!verificationStatus || !KNOWN_IPO_VERIFICATION_STATUSES.has(verificationStatus)) {
+      issues.push(
+        `Unknown or missing verificationStatus: "${verificationStatus || '(empty)'}"`,
+      );
+    }
+    if (!hasIsArchived) {
+      issues.push('Missing boolean isArchived field (invisible under 4-filter public query).');
+    }
+    if (!hasDeletionStatus) {
+      issues.push('Missing deletionStatus field (invisible under 4-filter public query).');
+    } else if (!KNOWN_IPO_DELETION_STATUSES.has(String(raw.deletionStatus))) {
+      issues.push(`Unknown deletionStatus: "${String(raw.deletionStatus)}"`);
+    }
+    if (
+      verificationStatus === 'verified' &&
+      (raw.isArchived === true ||
+        (hasDeletionStatus && raw.deletionStatus !== 'none') ||
+        (status && !PUBLIC_LIVE_IPO_STATUSES.has(status)))
+    ) {
+      issues.push(
+        `Inconsistent verified state (status="${status}", isArchived=${String(raw.isArchived)}, deletionStatus="${String(raw.deletionStatus)}")`,
+      );
+    }
+
+    if (issues.length > 0) {
+      invalidOrUnknownStatuses.push({
+        id,
+        companyName: raw.companyName || '(Unknown Company)',
+        status,
+        verificationStatus,
+        isArchived: raw.isArchived,
+        deletionStatus: raw.deletionStatus,
+        issues,
+      });
+    }
+  }
+
+  return {
+    totalRecords: ipos.length,
+    withIsArchivedCount,
+    withDeletionStatusCount,
+    missingEitherFieldCount: missingEitherSet.size,
+    missingIsArchivedIds,
+    missingDeletionStatusIds,
+    missingEitherFieldIds: [...missingEitherSet],
+    verifiedLegacy2FilterCount,
+    verifiedPublic4FilterCount,
+    droppedUnderNewQueryIds,
+    archivedCount,
+    unpublishedCount,
+    pendingDeletionCount,
+    draftOrAwaitingCount,
+    rejectedCount,
+    deletedCount,
+    invalidOrUnknownStatuses,
+  };
+}
+
+export interface IpoBackfillDryRunItem {
+  id: string;
+  companyName: string;
+  patchFields: Partial<Pick<ManagedIpoRecord, 'isArchived' | 'deletionStatus'>>;
+  wouldRestorePublicVisibility: boolean;
+  note: string;
+}
+
+export interface IpoBackfillDryRunReport {
+  generatedAt: string;
+  dryRunOnly: true;
+  recordsRequiringBackfill: number;
+  droppedVerifiedRecordsRescuedCount: number;
+  strategySummary: string;
+  items: IpoBackfillDryRunItem[];
+}
+
+/**
+ * Generates a read-only backwards-compatible dry-run backfill proposal for legacy /ipos documents
+ * missing `isArchived` or `deletionStatus` so Owner can inspect exact field defaults before approving
+ * any future migration or rule rollout. Executes ZERO database writes.
+ */
+export function buildIpoBackfillDryRunReport(
+  ipos: Array<Partial<ManagedIpoRecord> & { id: string }>,
+): IpoBackfillDryRunReport {
+  const items: IpoBackfillDryRunItem[] = [];
+  let droppedVerifiedRecordsRescuedCount = 0;
+
+  for (const raw of ipos) {
+    const patchFields: Partial<Pick<ManagedIpoRecord, 'isArchived' | 'deletionStatus'>> = {};
+    const status = String(raw.status ?? '');
+    const verificationStatus = String(raw.verificationStatus ?? '');
+
+    if (typeof raw.isArchived !== 'boolean') {
+      patchFields.isArchived = status === 'Archived' || verificationStatus === 'archived';
+    }
+    if (typeof raw.deletionStatus !== 'string' || !raw.deletionStatus) {
+      patchFields.deletionStatus =
+        status === 'Deleted'
+          ? 'deleted'
+          : status === 'Pending Deletion'
+            ? 'pending_approval'
+            : 'none';
+    }
+
+    if (Object.keys(patchFields).length === 0) continue;
+
+    const effectiveArchived =
+      typeof raw.isArchived === 'boolean' ? raw.isArchived : patchFields.isArchived;
+    const effectiveDeletion =
+      typeof raw.deletionStatus === 'string' && raw.deletionStatus
+        ? raw.deletionStatus
+        : patchFields.deletionStatus;
+
+    const wasVerifiedLive =
+      verificationStatus === 'verified' && PUBLIC_LIVE_IPO_STATUSES.has(status);
+    const wouldBePublicNow =
+      wasVerifiedLive && raw.isArchived === false && raw.deletionStatus === 'none';
+    const wouldBePublicAfter =
+      wasVerifiedLive && effectiveArchived === false && effectiveDeletion === 'none';
+    const wouldRestorePublicVisibility = !wouldBePublicNow && wouldBePublicAfter;
+    if (wouldRestorePublicVisibility) droppedVerifiedRecordsRescuedCount++;
+
+    items.push({
+      id: raw.id,
+      companyName: raw.companyName || '(Unknown Company)',
+      patchFields,
+      wouldRestorePublicVisibility,
+      note: wouldRestorePublicVisibility
+        ? 'Verified live IPO currently dropped by 4-filter query; backfill restores public visibility safely.'
+        : 'Backfills required schema defaults while keeping non-public record private.',
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    dryRunOnly: true,
+    recordsRequiringBackfill: items.length,
+    droppedVerifiedRecordsRescuedCount,
+    strategySummary:
+      'Backwards-compatible rollout: (1) Audit & backfill missing isArchived/deletionStatus defaults (isArchived=false, deletionStatus="none" for active verified docs) in an approved maintenance batch BEFORE enforcing strict 4-filter rules/query in production, OR serve a derived /publicCatalog/ipoFeed projection synced by Admin writes if historical /ipos docs must remain untouched.',
+    items,
+  };
+}
+

@@ -795,7 +795,8 @@ export function resolveLegacyOverridesReadResult(params: {
         ok: false,
         readPermitted: false,
         source: 'permission_denied_cache',
-        errorMessage: null,
+        errorMessage:
+          'Public suppression metadata (/publicCatalog/legacyOverrides) returned PERMISSION_DENIED under deployed Firestore rules. Deploy updated public read-only override policy before public launch so archived/deleted static articles cannot reappear on fresh browsers.',
       };
     }
     return {

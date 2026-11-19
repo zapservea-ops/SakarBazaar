@@ -15,6 +15,7 @@ import {
   getDocs,
   getFirestore,
   limit,
+  onSnapshot,
   orderBy,
   query,
   runTransaction,
@@ -28,6 +29,7 @@ import {
   type Query,
   type QueryDocumentSnapshot,
   type QuerySnapshot,
+  type Unsubscribe,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { MEDIA_ASSETS } from '../data/editorialData';
@@ -91,6 +93,7 @@ import {
   assertReviewPendingResolution,
   buildStableIpoMigrationKey,
   calculateIpoStatusFromDates,
+  classifyIpoDeletionEligibility,
   detectIpoFieldDiffs,
   hasDuplicateIpoReview,
   inspectIpoLinkedReferences,
@@ -98,6 +101,12 @@ import {
   mapManagedIpoToPublicRow,
   type DetectedIpoCandidate,
 } from '../utils/ipoLifecycle';
+import {
+  sortArticlesForAdmin,
+  sortAuditLogsForAdmin,
+  sortIpoReviewsForAdmin,
+  sortManagedIposForAdmin,
+} from '../utils/workspaceSync';
 import {
   canSafelyDeleteMediaAsset,
   collectCandidateReferencingArticleIds,
@@ -830,10 +839,13 @@ export async function fetchPublicLegacyOverridesWithStatus(): Promise<{
     };
   } catch (err) {
     const denied = isFirestorePermissionDenied(err);
-    if (!denied) {
-      const msg = err instanceof Error ? err.message : 'Unable to read legacyOverrides';
-      console.warn('Public legacyOverrides read failed:', msg);
-    }
+    const msg = err instanceof Error ? err.message : 'Unable to read legacyOverrides';
+    console.warn(
+      denied
+        ? 'Public legacyOverrides read failed (PERMISSION_DENIED — deploy updated firestore.rules for /publicCatalog/legacyOverrides):'
+        : 'Public legacyOverrides read failed:',
+      msg,
+    );
     const resolution = resolveLegacyOverridesReadResult({
       serverExists: false,
       cached,
@@ -2388,8 +2400,9 @@ export async function deleteIpoRecordSafely(ipo: ManagedIpoRecord): Promise<void
   const user = auth.currentUser;
   if (!user || !user.email) throw new Error('Authentication required.');
   const safeId = safeDocId(ipo.id, 'ipo');
-  if (isIpoPubliclyVisible(ipo)) {
-    throw new Error('Public IPO records cannot be deleted directly. Archive, unpublish, or mark for deletion first.');
+  const initialEligibility = classifyIpoDeletionEligibility(ipo);
+  if (!initialEligibility.canDeletePermanently) {
+    throw new Error(initialEligibility.reason);
   }
   const ipoRef = doc(db, 'ipos', safeId);
   const snap = await getDoc(ipoRef);
@@ -2400,20 +2413,9 @@ export async function deleteIpoRecordSafely(ipo: ManagedIpoRecord): Promise<void
     id: snap.id,
     ...(snap.data() as Omit<ManagedIpoRecord, 'id'>),
   };
-  const isNonPublicEligible =
-    !isIpoPubliclyVisible(current) &&
-    (Boolean(current.isArchived) ||
-      current.status === 'Archived' ||
-      current.status === 'Unpublished' ||
-      current.status === 'Awaiting Verification' ||
-      current.status === 'Pending Deletion' ||
-      current.deletionStatus === 'pending_approval' ||
-      current.deletionStatus === 'approved' ||
-      current.verificationStatus === 'archived' ||
-      current.verificationStatus === 'unpublished' ||
-      current.verificationStatus === 'awaiting_verification');
-  if (!isNonPublicEligible) {
-    throw new Error('Public IPO records cannot be deleted directly. Unpublish or archive it first.');
+  const currentEligibility = classifyIpoDeletionEligibility(current);
+  if (!currentEligibility.canDeletePermanently) {
+    throw new Error(currentEligibility.reason);
   }
 
   const [articles, reviews] = await Promise.all([
@@ -3486,4 +3488,79 @@ export async function submitContactNote(input: {
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, path);
   }
+}
+
+export interface AdminRealtimeSubscriptionHandlers {
+  onArticles: (articles: StoredArticleDoc[]) => void;
+  onIpos: (ipos: ManagedIpoRecord[]) => void;
+  onIpoReviews: (reviews: IpoSourceReviewRecord[]) => void;
+  onAuditLogs: (logs: AuditLogRecord[]) => void;
+  onError?: (collectionName: string, err: unknown) => void;
+}
+
+/**
+ * Targeted authenticated Admin-only real-time Firestore listeners (`onSnapshot`) for
+ * multi-operator editorial, pending-deletion, IPO, and audit synchronization.
+ * Strictly gated to authenticated AdminPage usage — NEVER attached on public routes.
+ */
+export function subscribeToAdminOperationalCollections(
+  handlers: AdminRealtimeSubscriptionHandlers,
+  opts?: { auditLogLimit?: number },
+): Unsubscribe {
+  const auditLimit = Math.max(20, Math.min(200, opts?.auditLogLimit ?? 80));
+
+  const unsubArticles = onSnapshot(
+    collection(db, 'articles'),
+    (snap) => {
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<StoredArticleDoc, 'id'>),
+      }));
+      handlers.onArticles(sortArticlesForAdmin(items));
+    },
+    (err) => handlers.onError?.('articles', err),
+  );
+
+  const unsubIpos = onSnapshot(
+    collection(db, 'ipos'),
+    (snap) => {
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ManagedIpoRecord, 'id'>),
+      }));
+      handlers.onIpos(sortManagedIposForAdmin(items));
+    },
+    (err) => handlers.onError?.('ipos', err),
+  );
+
+  const unsubReviews = onSnapshot(
+    collection(db, 'ipoSourceReviews'),
+    (snap) => {
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<IpoSourceReviewRecord, 'id'>),
+      }));
+      handlers.onIpoReviews(sortIpoReviewsForAdmin(items));
+    },
+    (err) => handlers.onError?.('ipoSourceReviews', err),
+  );
+
+  const unsubAudit = onSnapshot(
+    query(collection(db, 'auditLogs'), orderBy('createdAt', 'desc'), limit(auditLimit)),
+    (snap) => {
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<AuditLogRecord, 'id'>),
+      }));
+      handlers.onAuditLogs(sortAuditLogsForAdmin(items));
+    },
+    (err) => handlers.onError?.('auditLogs', err),
+  );
+
+  return () => {
+    unsubArticles();
+    unsubIpos();
+    unsubReviews();
+    unsubAudit();
+  };
 }

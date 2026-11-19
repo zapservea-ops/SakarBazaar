@@ -26,6 +26,7 @@ import {
   isValidMediaPayloadSize,
   type PolicyAuthContext,
 } from './firestoreRulesPolicy.ts';
+import { classifyIpoDeletionEligibility } from './ipoLifecycle.ts';
 
 const NOW = Date.UTC(2026, 10, 18, 12, 0, 0);
 const FUTURE = NOW + 3_600_000;
@@ -249,33 +250,43 @@ test('Firestore Rules Policy — /publicCatalog/legacyOverrides & deletion guard
   assert.equal(canDeleteMediaInFirestore(OWNER, 'med-1', false), true);
   assert.equal(canDeleteMediaInFirestore(REVOKED_ADMIN, 'med-1', false), false);
 
-  // IPO deletion allows BOTH Owner and Publisher for any non-public IPO (even if verificationStatus === 'verified' + archived/unpublished),
-  // while blocking deletion of active public IPOs and unauthorized users.
+  // IPO deletion allows BOTH Owner and Publisher for eligible non-public IPOs
+  // (archived, unpublished, Draft, Rejected, Awaiting Verification, Approved For Deletion),
+  // while blocking deletion of active public IPOs, pending_approval/Pending Deletion without approval, terminal Deleted docs, and unauthorized users.
   const publicOpenIpo = { verificationStatus: 'verified', status: 'Open', isArchived: false, deletionStatus: 'none' };
   const archivedStillVerifiedIpo = { verificationStatus: 'verified', status: 'Archived', isArchived: true, deletionStatus: 'none' };
   const unpublishedIpoDoc = { verificationStatus: 'unpublished', status: 'Unpublished', isArchived: false, deletionStatus: 'none' };
   const archivedFlaggedIpo = { verificationStatus: 'archived', status: 'Archived', isArchived: true, deletionStatus: 'none' };
   const awaitingIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Awaiting Verification', isArchived: false, deletionStatus: 'none' };
+  const draftIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Draft', isArchived: false, deletionStatus: 'none' };
+  const rejectedIpoDoc = { verificationStatus: 'rejected', status: 'Rejected', isArchived: false, deletionStatus: 'none' };
   const pendingDeleteIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Pending Deletion', isArchived: false, deletionStatus: 'pending_approval' };
   const approvedDeleteIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Pending Deletion', isArchived: false, deletionStatus: 'approved' };
+  const terminalDeletedIpoDoc = { verificationStatus: 'archived', status: 'Deleted', isArchived: true, deletionStatus: 'deleted' };
 
   for (const deletableIpo of [
     archivedStillVerifiedIpo,
     unpublishedIpoDoc,
     archivedFlaggedIpo,
     awaitingIpoDoc,
-    pendingDeleteIpoDoc,
+    draftIpoDoc,
+    rejectedIpoDoc,
     approvedDeleteIpoDoc,
   ]) {
     assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', deletableIpo), true);
     assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', deletableIpo), true);
+    assert.equal(classifyIpoDeletionEligibility(deletableIpo).canDeletePermanently, true);
     assert.equal(canDeleteIpoInFirestore(ANON, 'ipo-1', deletableIpo), false);
     assert.equal(canDeleteIpoInFirestore(RANDOM_VERIFIED_USER, 'ipo-1', deletableIpo), false);
     assert.equal(canDeleteIpoInFirestore(REVOKED_ADMIN, 'ipo-1', deletableIpo), false);
   }
-  // Public IPOs MUST remain protected from direct deletion for both roles
-  assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', publicOpenIpo), false);
-  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', publicOpenIpo), false);
+  // Public IPOs, unapproved pending_approval, and terminal Deleted docs MUST remain blocked for BOTH Owner and Publisher
+  for (const blockedIpo of [publicOpenIpo, pendingDeleteIpoDoc, terminalDeletedIpoDoc]) {
+    assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', blockedIpo), false);
+    assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', blockedIpo), false);
+    assert.equal(classifyIpoDeletionEligibility(blockedIpo).canDeletePermanently, false);
+  }
+  assert.equal(classifyIpoDeletionEligibility(pendingDeleteIpoDoc).requiresApprovalFirst, true);
 
   // Security-sensitive / Owner-only delete boundaries remain strictly Owner-only
   assert.equal(canDeleteIpoSourceReviewInFirestore(PUBLISHER, 'rev-1'), false);
@@ -323,6 +334,117 @@ test('Firestore Rules Policy — IPO public get & list boundaries have strict pa
     assert.equal(canPublicOrUserGetIpo(PUBLISHER, 'ipo-hidden-1', hiddenIpo), true);
     assert.equal(canPublicOrUserListIpo(OWNER, hiddenIpo), true);
   }
+});
+
+test('Firestore Rules Policy — Truth-Table Parity Across Every IPO verificationStatus/status/isArchived/deletionStatus Combination', () => {
+  const verificationStatuses = [
+    'verified',
+    'awaiting_verification',
+    'unpublished',
+    'archived',
+    'rejected',
+    'proposed',
+  ];
+  const statuses = [
+    'Open',
+    'Upcoming',
+    'Closed',
+    'Listed',
+    'Awaiting Verification',
+    'Draft',
+    'Rejected',
+    'Archived',
+    'Unpublished',
+    'Pending Deletion',
+    'Deleted',
+  ];
+  const isArchivedValues: Array<boolean | undefined> = [false, true, undefined];
+  const deletionStatuses: Array<string | undefined> = [
+    'none',
+    'pending_approval',
+    'approved',
+    'deleted',
+    undefined,
+  ];
+
+  let checkedCombinations = 0;
+  let eligibleCombinations = 0;
+  let approvalBlockedCombinations = 0;
+
+  for (const verificationStatus of verificationStatuses) {
+    for (const status of statuses) {
+      for (const isArchived of isArchivedValues) {
+        for (const deletionStatus of deletionStatuses) {
+          checkedCombinations++;
+          const docData = {
+            verificationStatus,
+            status,
+            ...(isArchived !== undefined ? { isArchived } : {}),
+            ...(deletionStatus !== undefined ? { deletionStatus } : {}),
+          };
+
+          const uiEligibility = classifyIpoDeletionEligibility(docData);
+          const ownerCanDelete = canDeleteIpoInFirestore(OWNER, 'ipo-truth-1', docData);
+          const publisherCanDelete = canDeleteIpoInFirestore(PUBLISHER, 'ipo-truth-1', docData);
+          const anonCanDelete = canDeleteIpoInFirestore(ANON, 'ipo-truth-1', docData);
+          const randomUserCanDelete = canDeleteIpoInFirestore(RANDOM_VERIFIED_USER, 'ipo-truth-1', docData);
+          const revokedCanDelete = canDeleteIpoInFirestore(REVOKED_ADMIN, 'ipo-truth-1', docData);
+
+          // Exact 1:1 parity between UI/handler eligibility and Firestore rules for BOTH Owner and Publisher
+          assert.equal(
+            ownerCanDelete,
+            uiEligibility.canDeletePermanently,
+            `Owner parity mismatch for ${JSON.stringify(docData)}`,
+          );
+          assert.equal(
+            publisherCanDelete,
+            uiEligibility.canDeletePermanently,
+            `Publisher parity mismatch for ${JSON.stringify(docData)}`,
+          );
+
+          // Unauthorized / unauthenticated / revoked accounts MUST ALWAYS be denied
+          assert.equal(anonCanDelete, false);
+          assert.equal(randomUserCanDelete, false);
+          assert.equal(revokedCanDelete, false);
+
+          // Publicly visible IPOs MUST NEVER be directly deletable
+          if (canPublicOrUserGetIpo(ANON, 'ipo-truth-1', docData)) {
+            assert.equal(uiEligibility.canDeletePermanently, false);
+            assert.equal(ownerCanDelete, false);
+            assert.equal(publisherCanDelete, false);
+          }
+
+          // pending_approval and unapproved Pending Deletion MUST NEVER bypass approval
+          if (
+            deletionStatus === 'pending_approval' ||
+            (status === 'Pending Deletion' && deletionStatus !== 'approved')
+          ) {
+            if (deletionStatus !== 'deleted' && status !== 'Deleted') {
+              assert.equal(uiEligibility.canDeletePermanently, false);
+              assert.equal(ownerCanDelete, false);
+              assert.equal(publisherCanDelete, false);
+              approvalBlockedCombinations++;
+            }
+          }
+
+          // Terminal deleted records MUST NEVER be deletable again
+          if (deletionStatus === 'deleted' || status === 'Deleted') {
+            assert.equal(uiEligibility.canDeletePermanently, false);
+            assert.equal(ownerCanDelete, false);
+            assert.equal(publisherCanDelete, false);
+          }
+
+          if (uiEligibility.canDeletePermanently) {
+            eligibleCombinations++;
+          }
+        }
+      }
+    }
+  }
+
+  assert.equal(checkedCombinations, 6 * 11 * 3 * 5);
+  assert.ok(eligibleCombinations > 0);
+  assert.ok(approvalBlockedCombinations > 0);
 });
 
 

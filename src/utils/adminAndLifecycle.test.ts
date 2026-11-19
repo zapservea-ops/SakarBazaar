@@ -51,6 +51,8 @@ import {
 } from './backupRestore.ts';
 import {
   assertReviewPendingResolution,
+  buildIpoBackfillDryRunReport,
+  buildProductionIpoSchemaInventory,
   buildUnifiedIpoManagementPreview,
   calculateIpoStatusFromDates,
   classifyBuiltInIpoCatalogRecord,
@@ -1515,7 +1517,7 @@ test('Acceptance §3 (Legacy Suppression Matrix across fresh/stale cache, permis
     ['leg-live'],
   );
 
-  // 3. Firestore permission failure preserves existing cache & reports readPermitted=false cleanly
+  // 3. Firestore permission failure preserves existing cache & surfaces explicit PERMISSION_DENIED diagnostic
   const permFailure = resolveLegacyOverridesReadResult({
     serverExists: false,
     cached: serverOverrides,
@@ -1525,6 +1527,7 @@ test('Acceptance §3 (Legacy Suppression Matrix across fresh/stale cache, permis
   assert.equal(permFailure.ok, false);
   assert.equal(permFailure.readPermitted, false);
   assert.equal(permFailure.source, 'permission_denied_cache');
+  assert.ok(permFailure.errorMessage && /PERMISSION_DENIED/.test(permFailure.errorMessage));
   assert.deepEqual(
     filterPublicArticlesWithOverrides(publicRemoteOnly, staticCatalog, permFailure.overrides, now).map((a) => a.id),
     ['leg-live'],
@@ -1733,6 +1736,95 @@ test('Acceptance §5 (Simulated Isolated Fake-Backend): Complete News & IPO CRUD
   createAndLifecycleDeleteIpo('owner', 'ipo-owner-del-test');
   createAndLifecycleDeleteIpo('publisher', 'ipo-pub-del-test');
   assert.equal(fakeAudit.filter((a) => a.entityType === 'ipo' && a.action === 'complete_delete').length, 2);
+});
+
+test('Release Blocker §1: Read-only Production /ipos Schema Inventory & Backfill Dry-Run Analyzer', () => {
+  const mixedSample = [
+    {
+      id: 'ipo-modern-public',
+      companyName: 'Modern Public FinCorp',
+      verificationStatus: 'verified' as const,
+      status: 'Open' as const,
+      isArchived: false,
+      deletionStatus: 'none' as const,
+    },
+    {
+      id: 'ipo-legacy-verified-missing-both',
+      companyName: 'Legacy Missing Defaults Ltd',
+      verificationStatus: 'verified' as const,
+      status: 'Listed' as const,
+    },
+    {
+      id: 'ipo-legacy-missing-del',
+      companyName: 'Legacy Missing DeletionStatus Ltd',
+      verificationStatus: 'verified' as const,
+      status: 'Upcoming' as const,
+      isArchived: false,
+    },
+    {
+      id: 'ipo-archived',
+      companyName: 'Archived Holdings',
+      verificationStatus: 'archived' as const,
+      status: 'Archived' as const,
+      isArchived: true,
+      deletionStatus: 'none' as const,
+    },
+    {
+      id: 'ipo-unpublished',
+      companyName: 'Unpublished Infra',
+      verificationStatus: 'unpublished' as const,
+      status: 'Unpublished' as const,
+      isArchived: false,
+      deletionStatus: 'none' as const,
+    },
+    {
+      id: 'ipo-pending-del',
+      companyName: 'Pending Del Retail',
+      verificationStatus: 'awaiting_verification' as const,
+      status: 'Pending Deletion' as const,
+      isArchived: false,
+      deletionStatus: 'pending_approval' as const,
+    },
+    {
+      id: 'ipo-unknown-anomaly',
+      companyName: 'Corrupt Status Co',
+      verificationStatus: 'bogus_verif' as never,
+      status: 'MysteryStatus' as never,
+      isArchived: false,
+      deletionStatus: 'weird_del' as never,
+    },
+  ];
+
+  const inv = buildProductionIpoSchemaInventory(mixedSample);
+  assert.equal(inv.totalRecords, 7);
+  assert.equal(inv.withIsArchivedCount, 6);
+  assert.equal(inv.withDeletionStatusCount, 5);
+  assert.equal(inv.missingEitherFieldCount, 2);
+  assert.deepEqual(inv.missingIsArchivedIds, ['ipo-legacy-verified-missing-both']);
+  assert.deepEqual(inv.missingDeletionStatusIds, [
+    'ipo-legacy-verified-missing-both',
+    'ipo-legacy-missing-del',
+  ]);
+  assert.equal(inv.verifiedLegacy2FilterCount, 3);
+  assert.equal(inv.verifiedPublic4FilterCount, 1);
+  assert.deepEqual(inv.droppedUnderNewQueryIds, [
+    'ipo-legacy-verified-missing-both',
+    'ipo-legacy-missing-del',
+  ]);
+  assert.equal(inv.archivedCount, 1);
+  assert.equal(inv.unpublishedCount, 1);
+  assert.equal(inv.pendingDeletionCount, 1);
+  assert.equal(inv.invalidOrUnknownStatuses.length, 3);
+
+  const dryRun = buildIpoBackfillDryRunReport(mixedSample);
+  assert.equal(dryRun.dryRunOnly, true);
+  assert.equal(dryRun.recordsRequiringBackfill, 2);
+  assert.equal(dryRun.droppedVerifiedRecordsRescuedCount, 2);
+  assert.deepEqual(dryRun.items[0].patchFields, { isArchived: false, deletionStatus: 'none' });
+  assert.deepEqual(dryRun.items[1].patchFields, { deletionStatus: 'none' });
+  // Confirm input docs remain unmodified (read-only guarantee)
+  assert.equal('isArchived' in mixedSample[1], false);
+  assert.equal('deletionStatus' in mixedSample[2], false);
 });
 
 

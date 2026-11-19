@@ -211,7 +211,7 @@
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["companyName", "slug", "segment", "status", "verificationStatus", "updatedByUid", "createdAt", "updatedAt"]
+      "required": ["companyName", "slug", "segment", "status", "verificationStatus", "isArchived", "deletionStatus", "updatedByUid", "createdAt", "updatedAt"]
     },
     "IpoSourceReview": {
       "title": "IpoSourceReview",

@@ -53,6 +53,11 @@ import {
   resolveFrontendRefreshIntervalMs,
 } from '../utils/marketPolling';
 import { isIpoPubliclyVisible } from '../utils/ipoLifecycle';
+import {
+  createTabSessionId,
+  shouldRunEconomicalVisibilityRefresh,
+  subscribeWorkspaceSyncSignals,
+} from '../utils/workspaceSync';
 
 const THEME_KEY = 'sb-theme';
 const LANG_KEY = 'sb-lang';
@@ -201,6 +206,8 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   const desktopSearchRef = useRef<HTMLInputElement | null>(null);
   const mobileSearchRef = useRef<HTMLInputElement | null>(null);
   const marketControllerRef = useRef<MarketAutoRefreshController | null>(null);
+  const tabSessionIdRef = useRef<string>(createTabSessionId());
+  const lastPublicRefreshMsRef = useRef<number>(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -316,6 +323,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshArticles = useCallback(async () => {
+    lastPublicRefreshMsRef.current = Date.now();
     const [remoteRes, overridesRes] = await Promise.all([
       fetchPublishedEditorialArticlesWithStatus(),
       fetchPublicLegacyOverridesWithStatus(),
@@ -337,6 +345,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshIpos = useCallback(async () => {
+    lastPublicRefreshMsRef.current = Date.now();
     const remoteIposRes = await fetchPublicVerifiedIposWithStatus();
     setRemoteVerifiedIpos(remoteIposRes.items);
     setPublicDataDiagnostics((prev) => {
@@ -356,6 +365,35 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refreshArticles();
     void refreshIpos();
+
+    // Instant same-browser cross-tab sync when an operator mutates News, IPOs, or Overrides in /admin
+    const unsubscribeSync = subscribeWorkspaceSyncSignals({
+      senderId: tabSessionIdRef.current,
+      onSignal: (signal) => {
+        const topics = new Set(signal.topics);
+        if (topics.has('all') || topics.has('articles') || topics.has('legacyOverrides')) {
+          void refreshArticles();
+        }
+        if (topics.has('all') || topics.has('ipos')) {
+          void refreshIpos();
+        }
+      },
+    });
+
+    // Economical throttled refresh when returning to an open public/reader tab (>= 30s cooldown, zero polling)
+    const onPublicVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (shouldRunEconomicalVisibilityRefresh(lastPublicRefreshMsRef.current, Date.now(), 30_000)) {
+        void refreshArticles();
+        void refreshIpos();
+      }
+    };
+    document.addEventListener('visibilitychange', onPublicVisibilityChange);
+
+    return () => {
+      unsubscribeSync();
+      document.removeEventListener('visibilitychange', onPublicVisibilityChange);
+    };
   }, [refreshArticles, refreshIpos]);
 
   useEffect(() => {

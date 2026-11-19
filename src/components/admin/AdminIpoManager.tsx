@@ -10,11 +10,13 @@ import {
 import type { IpoSegment, ManagedIpoRecord } from '../../types/sakarbazaar';
 import {
   buildHistoricalIpoConflictReport,
+  buildIpoBackfillDryRunReport,
+  buildProductionIpoSchemaInventory,
   buildStableIpoMigrationKey,
   calculateIpoStatusFromDates,
+  classifyIpoDeletionEligibility,
   formatOfficialIpoField,
   inspectIpoLinkedReferences,
-  isIpoPubliclyVisible,
 } from '../../utils/ipoLifecycle';
 import { extractReadableErrorMessage, extractTimestampMillis, sanitizeArticleSlug } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
@@ -89,6 +91,14 @@ export function AdminIpoManager({
   const recordClassifications = conflictReport.recordClassifications ?? [];
   const unifiedPreview = conflictReport.unifiedPreview ?? [];
   const [showUnifiedPreview, setShowUnifiedPreview] = useState(true);
+  const schemaInventory = useMemo(
+    () => buildProductionIpoSchemaInventory(data.ipos),
+    [data.ipos],
+  );
+  const backfillDryRun = useMemo(
+    () => buildIpoBackfillDryRunReport(data.ipos),
+    [data.ipos],
+  );
 
   const previewStatus = calculateIpoStatusFromDates({
     openingDate,
@@ -569,6 +579,52 @@ export function AdminIpoManager({
           </div>
         </div>
 
+        <div className="sb-admin-subpanel" style={{ marginBottom: '12px' }}>
+          <strong>Production /ipos Schema &amp; 4-Filter Query Readiness (Read-Only Inventory):</strong>
+          <div className="sb-admin-kpi-grid" style={{ marginTop: '8px', marginBottom: '8px' }}>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.totalRecords}</b>
+              <span>Total /ipos Docs</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.withIsArchivedCount}</b>
+              <span>With isArchived</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.withDeletionStatusCount}</b>
+              <span>With deletionStatus</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.missingEitherFieldCount}</b>
+              <span>Missing Either Field</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.verifiedPublic4FilterCount} / {schemaInventory.verifiedLegacy2FilterCount}</b>
+              <span>4-Filter vs 2-Filter Live</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.droppedUnderNewQueryIds.length}</b>
+              <span>Dropped by 4-Filter Query</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>
+                {schemaInventory.archivedCount} / {schemaInventory.unpublishedCount} / {schemaInventory.pendingDeletionCount}
+              </b>
+              <span>Arch / Unpub / Pending Del</span>
+            </div>
+            <div className="sb-admin-kpi">
+              <b>{schemaInventory.invalidOrUnknownStatuses.length}</b>
+              <span>Schema / Status Anomalies</span>
+            </div>
+          </div>
+          <div className="meta" style={{ lineHeight: 1.55 }}>
+            {backfillDryRun.recordsRequiringBackfill > 0
+              ? `Dry-Run Backfill Preview: ${backfillDryRun.recordsRequiringBackfill} record(s) need defaults (${backfillDryRun.droppedVerifiedRecordsRescuedCount} verified public record(s) would restore visibility). `
+              : 'All loaded Firestore /ipos records carry explicit isArchived & deletionStatus fields. '}
+            {backfillDryRun.strategySummary}
+          </div>
+        </div>
+
         {recordClassifications.length > 0 && (
           <div className="sb-admin-subpanel" style={{ marginBottom: '12px' }}>
             <strong>Built-in IPO_ALL_RECORDS Classification Report ({recordClassifications.length}):</strong>
@@ -697,7 +753,8 @@ export function AdminIpoManager({
         {data.ipos.length > 0 ? (
           <div className="sb-admin-card-list">
             {data.ipos.map((ipo) => {
-              const isPublic = isIpoPubliclyVisible(ipo);
+              const deletionEligibility = classifyIpoDeletionEligibility(ipo);
+              const isPublic = deletionEligibility.isPublic;
               const displayMigrationKey = ipo.migrationKey || buildStableIpoMigrationKey(ipo);
               const isBusyRow = busyRowId === ipo.id;
               const canRestore =
@@ -705,6 +762,9 @@ export function AdminIpoManager({
                 ipo.verificationStatus === 'archived' ||
                 ipo.verificationStatus === 'unpublished' ||
                 ipo.verificationStatus === 'awaiting_verification' ||
+                String(ipo.verificationStatus) === 'rejected' ||
+                String(ipo.status) === 'Rejected' ||
+                String(ipo.status) === 'Draft' ||
                 (ipo.deletionStatus && ipo.deletionStatus !== 'none');
 
               return (
@@ -719,6 +779,12 @@ export function AdminIpoManager({
                       <span className={`pill ${ipo.verificationStatus === 'verified' ? 'sb-pill-teal' : 'sb-pill-amber'}`}>
                         {ipo.verificationStatus}
                       </span>
+                      {deletionEligibility.requiresApprovalFirst && (
+                        <span className="pill sb-pill-amber">Pending Approval</span>
+                      )}
+                      {ipo.deletionStatus === 'approved' && (
+                        <span className="pill sb-pill-amber">Approved for Deletion</span>
+                      )}
                     </div>
                     <span className="meta">
                       Open: {formatOfficialIpoField(ipo.openingDate)} · Close: {formatOfficialIpoField(ipo.closingDate)}
@@ -816,7 +882,7 @@ export function AdminIpoManager({
                           Restore
                         </button>
                       )}
-                      {ipo.deletionStatus !== 'pending_approval' && ipo.deletionStatus !== 'approved' && (
+                      {deletionEligibility.canRequestDeletion && (
                         <button
                           type="button"
                           className="btn ghost"
@@ -827,7 +893,7 @@ export function AdminIpoManager({
                           Mark Pending Deletion
                         </button>
                       )}
-                      {ipo.deletionStatus === 'pending_approval' && permissions.canApprovePermanentDeletion && (
+                      {deletionEligibility.canApproveDeletion && permissions.canApprovePermanentDeletion && (
                         <button
                           type="button"
                           className="btn ghost"
@@ -843,12 +909,8 @@ export function AdminIpoManager({
                           type="button"
                           className="btn ghost"
                           style={{ color: 'var(--down)' }}
-                          disabled={isBusyRow || isPublic}
-                          title={
-                            isPublic
-                              ? 'Archive, Unpublish, or mark Pending Deletion before permanent deletion'
-                              : 'Controlled permanent deletion (Owner or Publisher)'
-                          }
+                          disabled={isBusyRow || !deletionEligibility.canDeletePermanently}
+                          title={deletionEligibility.reason}
                           onClick={() => setConfirmDeleteId(ipo.id)}
                         >
                           Delete

@@ -77,7 +77,8 @@ export function HomePage() {
       </section>
 
       <main id="top" className="wrap sb-home-main">
-        {!publicDataDiagnostics.articlesOk && publicDataDiagnostics.message && (
+        {(!publicDataDiagnostics.articlesOk || !publicDataDiagnostics.overridesOk) &&
+          publicDataDiagnostics.message && (
           <div
             className="sb-note-box"
             role="status"

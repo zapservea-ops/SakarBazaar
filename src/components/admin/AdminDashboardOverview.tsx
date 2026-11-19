@@ -1,10 +1,7 @@
 import { ARTICLES_CATALOG } from '../../data/sampleData';
-import {
-  classifyArticleLifecycle,
-  formatRemainingDuration,
-  isArticleExpiringSoon,
-} from '../../utils/newsLifecycle';
+import { formatRemainingDuration } from '../../utils/newsLifecycle';
 import { estimateMediaQuotaUsage } from '../../utils/mediaLibrary';
+import { computeAdminDashboardCounters } from '../../utils/workspaceSync';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 export function AdminDashboardOverview({
@@ -13,24 +10,23 @@ export function AdminDashboardOverview({
   onNavigate,
 }: AdminSectionBaseProps) {
   const nowMs = Date.now();
-  const thresholdHours = data.systemSettings.expiringSoonThresholdHours || 48;
+  const counters = computeAdminDashboardCounters({
+    articles: data.articles,
+    ipos: data.ipos,
+    ipoReviews: data.ipoReviews,
+    staticArticles: ARTICLES_CATALOG,
+    systemSettings: data.systemSettings,
+    nowMs,
+  });
 
-  const classified = data.articles.map((a) => ({
-    article: a,
-    lifecycle: classifyArticleLifecycle(a, nowMs),
-  }));
-
-  const activePublished = classified.filter((c) => c.lifecycle.isPublic).map((c) => c.article);
-  const drafts = classified.filter((c) => c.lifecycle.isDraftReview).map((c) => c.article);
-  const expiringSoon = data.articles.filter((a) => isArticleExpiringSoon(a, nowMs, thresholdHours));
-  const expiredOrRetained = classified.filter((c) => c.lifecycle.isExpiredArchive).map((c) => c.article);
-  const firestoreIds = new Set(data.articles.map((a) => a.id));
-  const firestoreSlugs = new Set(data.articles.map((a) => a.slug));
-  const unmigratedLegacyCount = ARTICLES_CATALOG.filter(
-    (base) => !firestoreIds.has(base.id) && !firestoreSlugs.has(base.slug),
-  ).length;
-  const pendingDeletion = classified.filter((c) => c.lifecycle.inDeletionQueue).map((c) => c.article);
-  const needsReviewIpos = data.ipoReviews.filter((r) => r.reviewStatus === 'Needs Review');
+  const thresholdHours = counters.thresholdHours;
+  const activePublished = counters.livePublicArticles;
+  const drafts = counters.draftArticles;
+  const expiringSoon = counters.expiringSoonArticles;
+  const expiredOrRetained = counters.expiredOrRetainedArticles;
+  const unmigratedLegacyCount = counters.unmigratedLegacyCount;
+  const pendingDeletion = counters.pendingDeletionArticles;
+  const needsReviewIpos = counters.needsReviewIpos;
   const quota = estimateMediaQuotaUsage(data.media);
 
   return (
