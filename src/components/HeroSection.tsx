@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS } from '../data/i18n';
 import type { ArticleRecord } from '../types/sakarbazaar';
-import { EditorialArt } from './EditorialArt';
+import { hasVideoMedia } from '../utils/articleMedia';
+import { ArticleMediaThumb } from './ArticleMediaThumb';
 
 interface HeroSectionProps {
   leadArticle: ArticleRecord;
@@ -42,15 +43,15 @@ export function HeroSection({ leadArticle, secondaryArticle }: HeroSectionProps)
   return (
     <div className="top">
       <article className="card hero">
-        <div className="art">
-          <EditorialArt
-            variant={leadArticle.illustration}
-            label={leadArticle.illustrationCaption}
-          />
-        </div>
+        <Link to={`/article/${leadArticle.slug}`} className="art" aria-label={heroHeadline}>
+          <ArticleMediaThumb article={leadArticle} />
+        </Link>
         <div className="body">
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="pill">{CATEGORY_LABELS[lang][leadArticle.category]}</span>
+            {hasVideoMedia(leadArticle) && (
+              <span className="sb-inline-video-pill">▶ Video Brief</span>
+            )}
             <span className="meta" id="heroTime">
               {leadArticle.publishedAt} · {leadArticle.readTime}
             </span>
@@ -58,7 +59,7 @@ export function HeroSection({ leadArticle, secondaryArticle }: HeroSectionProps)
           <h1>
             <Link to={`/article/${leadArticle.slug}`}>{heroHeadline}</Link>
           </h1>
-          <p>{heroDeck}</p>
+          <p className="sb-clamp-3">{heroDeck}</p>
           <div className="foot">
             <span>{leadArticle.author}</span>
             <span className="sb-hero-actions">

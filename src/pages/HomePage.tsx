@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { EditorialArt } from '../components/EditorialArt';
+import { ArticleMediaThumb } from '../components/ArticleMediaThumb';
 import { EditorialCalendarStrip } from '../components/EditorialCalendarStrip';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS, IPO_STATUS_LABELS } from '../data/i18n';
 import {
   CALENDAR_SCHEDULE,
   HOMEPAGE_NEWS_CATEGORIES,
-  IPO_ALL_RECORDS,
   MARKET_PULSE_ITEMS,
 } from '../data/sampleData';
 import type { HomepageNewsCategory } from '../types/sakarbazaar';
+import { hasVideoMedia } from '../utils/articleMedia';
 import { filterNewsItems } from '../utils/marketFormat';
+import { selectHomepageFeaturedArticles } from '../utils/newsLifecycle';
 
 const categoryColors: Record<string, string> = {
   RBI: '#0b6b6b',
@@ -30,6 +31,7 @@ export function HomePage() {
     searchTerm,
     articlesCatalog,
     newsItems,
+    ipoRecords,
     toggleBookmark,
   } = useSakarBazaar();
 
@@ -40,11 +42,11 @@ export function HomePage() {
     document.title = 'SakarBazaar – India Financial Intelligence';
   }, []);
 
-  // Top 3 featured articles
-  const topThreeArticles = articlesCatalog.slice(0, 3);
-  const leadArticle = topThreeArticles[0];
-  const secondArticle = topThreeArticles[1];
-  const thirdArticle = topThreeArticles[2];
+  // Featured articles (1 manual main story + up to 3 secondary stories)
+  const { mainStory: leadArticle, secondaryStories } = selectHomepageFeaturedArticles(articlesCatalog);
+  const secondArticle = secondaryStories[0];
+  const thirdArticle = secondaryStories[1];
+  const extraFeaturedArticle = secondaryStories[2];
 
   const filteredNews = filterNewsItems(newsItems, selectedCategory, searchTerm);
 
@@ -53,19 +55,19 @@ export function HomePage() {
       {/* ── EDITORIAL NEWSPAPER MASTHEAD ────────────────────────────── */}
       <section className="sb-masthead">
         <div className="wrap">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '12px' }}>
+          <div className="sb-masthead-inner">
             <div>
               <div className="sb-masthead-eyebrow">India Financial Intelligence</div>
               <h1>SakarBazaar</h1>
               <p className="sb-masthead-tagline">
-                "From financial news to financial understanding."
+                &ldquo;From financial news to financial understanding.&rdquo;
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <Link to="/news" className="btn ghost" style={{ fontSize: '13px' }}>
+            <div className="sb-masthead-actions">
+              <Link to="/news" className="btn ghost">
                 Latest News →
               </Link>
-              <Link to="/intelligence" className="btn" style={{ fontSize: '13px' }}>
+              <Link to="/intelligence" className="btn">
                 Intelligence Pulse →
               </Link>
             </div>
@@ -73,17 +75,17 @@ export function HomePage() {
         </div>
       </section>
 
-      <main id="top" className="wrap">
+      <main id="top" className="wrap sb-home-main">
         {/* ── PROMINENT TOP THREE FINANCIAL STORIES ───────────────────── */}
-        <section aria-label="Lead Financial Stories" style={{ marginBottom: '32px' }}>
-          <div className="sec-h" style={{ marginBottom: '16px' }}>
+        <section className="sb-dispatches-section" aria-label="Lead Financial Stories">
+          <div className="sec-h">
             <div>
-              <h2 style={{ margin: 0, fontSize: '20px' }}>
+              <h2>
                 PRIMARY <span style={{ color: 'var(--teal)' }}>DISPATCHES</span>
               </h2>
               <span className="meta">Editorial coverage &amp; corporate developments</span>
             </div>
-            <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
+            <Link to="/news" className="sb-sec-link">
               All News ({articlesCatalog.length}) →
             </Link>
           </div>
@@ -91,33 +93,42 @@ export function HomePage() {
           <div className="sb-three-stories-grid">
             {/* Story 1: Lead Article */}
             {leadArticle && (
-              <article className="card sb-story-featured">
-                <Link to={`/article/${leadArticle.slug}`} aria-label={leadArticle.headline}>
-                  <EditorialArt
-                    variant={leadArticle.illustration}
-                    label={leadArticle.illustrationCaption}
-                  />
+              <article className="card sb-story-card sb-story-featured">
+                <Link
+                  to={`/article/${leadArticle.slug}`}
+                  className="sb-story-media-link"
+                  aria-label={leadArticle.headline}
+                >
+                  <ArticleMediaThumb article={leadArticle} />
                 </Link>
-                <div style={{ marginTop: '14px' }}>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '8px' }}>
+                <div className="sb-story-body">
+                  <div className="sb-story-meta-row">
                     <span className="cat">{CATEGORY_LABELS[lang][leadArticle.category]}</span>
-                    {leadArticle.media && (
-                      <span className="pill" style={{ background: '#0b6b6b', color: '#fff', fontSize: '11px' }}>
-                        ▶ Video Brief
+                    {hasVideoMedia(leadArticle) && (
+                      <span className="sb-inline-video-pill">▶ Video Brief</span>
+                    )}
+                    {leadArticle.isPaid && (
+                      <span className="pill sb-pill-muted" style={{ fontSize: '10px' }}>
+                        {leadArticle.paidDisclosureLabel || 'Partner Disclosure'}
                       </span>
                     )}
-                    <span className="meta">{leadArticle.time} · {leadArticle.readTime}</span>
+                    <span className="meta">
+                      {leadArticle.time} · {leadArticle.readTime}
+                    </span>
                   </div>
-                  <h3 style={{ fontSize: '20px', lineHeight: '1.3', margin: '0 0 10px' }}>
-                    <Link to={`/article/${leadArticle.slug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                      {lang === 'hi' && leadArticle.headlineHi ? leadArticle.headlineHi : leadArticle.headline}
+                  <h3 className="sb-story-title sb-story-title-lead">
+                    <Link to={`/article/${leadArticle.slug}`}>
+                      {lang === 'hi' && leadArticle.headlineHi
+                        ? leadArticle.headlineHi
+                        : leadArticle.headline}
                     </Link>
                   </h3>
-                  <p style={{ margin: '0 0 12px', fontSize: '14px', lineHeight: '1.55', color: 'var(--muted)' }}>
+                  <p className="sb-story-deck sb-clamp-3">
                     {lang === 'hi' && leadArticle.deckHi ? leadArticle.deckHi : leadArticle.deck}
                   </p>
-                  <div className="src" style={{ fontSize: '12px' }}>
-                    <b>{leadArticle.ticker}</b> · {leadArticle.author}
+                  <div className="src sb-story-source">
+                    <b>{leadArticle.ticker}</b>
+                    <span>{leadArticle.author}</span>
                   </div>
                 </div>
               </article>
@@ -125,90 +136,138 @@ export function HomePage() {
 
             {/* Story 2: Second Article */}
             {secondArticle && (
-              <article className="card sb-story-secondary">
-                <Link to={`/article/${secondArticle.slug}`} aria-label={secondArticle.headline}>
-                  <EditorialArt
-                    variant={secondArticle.illustration}
-                    label={secondArticle.illustrationCaption}
-                    compact
-                  />
+              <article className="card sb-story-card sb-story-secondary">
+                <Link
+                  to={`/article/${secondArticle.slug}`}
+                  className="sb-story-media-link"
+                  aria-label={secondArticle.headline}
+                >
+                  <ArticleMediaThumb article={secondArticle} />
                 </Link>
-                <div style={{ marginTop: '12px' }}>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
+                <div className="sb-story-body">
+                  <div className="sb-story-meta-row">
                     <span className="cat">{CATEGORY_LABELS[lang][secondArticle.category]}</span>
-                    <span className="meta">{secondArticle.time}</span>
+                    {hasVideoMedia(secondArticle) && (
+                      <span className="sb-inline-video-pill">▶ Video</span>
+                    )}
+                    {secondArticle.isPaid && (
+                      <span className="pill sb-pill-muted" style={{ fontSize: '10px' }}>
+                        {secondArticle.paidDisclosureLabel || 'Partner Disclosure'}
+                      </span>
+                    )}
+                    <span className="meta">
+                      {secondArticle.time} · {secondArticle.readTime}
+                    </span>
                   </div>
-                  <h3 style={{ fontSize: '17px', lineHeight: '1.35', margin: '0 0 8px' }}>
-                    <Link to={`/article/${secondArticle.slug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                      {lang === 'hi' && secondArticle.headlineHi ? secondArticle.headlineHi : secondArticle.headline}
+                  <h3 className="sb-story-title">
+                    <Link to={`/article/${secondArticle.slug}`}>
+                      {lang === 'hi' && secondArticle.headlineHi
+                        ? secondArticle.headlineHi
+                        : secondArticle.headline}
                     </Link>
                   </h3>
-                  <p style={{ margin: '0 0 10px', fontSize: '13px', lineHeight: '1.5', color: 'var(--muted)' }}>
-                    {lang === 'hi' && secondArticle.deckHi ? secondArticle.deckHi : secondArticle.deck}
+                  <p className="sb-story-deck sb-clamp-3">
+                    {lang === 'hi' && secondArticle.deckHi
+                      ? secondArticle.deckHi
+                      : secondArticle.deck}
                   </p>
-                  <div className="src" style={{ fontSize: '12px' }}>
-                    <b>{secondArticle.ticker}</b> · {secondArticle.author}
+                  <div className="src sb-story-source">
+                    <b>{secondArticle.ticker}</b>
+                    <span>{secondArticle.author}</span>
                   </div>
                 </div>
               </article>
             )}
 
-            {/* Story 3: NHC Foods (New Article with Video) */}
+            {/* Story 3: NHC Foods (Article with Video) */}
             {thirdArticle && (
-              <article className="card sb-story-secondary">
-                <Link to={`/article/${thirdArticle.slug}`} aria-label={thirdArticle.headline}>
-                  <EditorialArt
-                    variant={thirdArticle.illustration}
-                    label={thirdArticle.illustrationCaption}
-                    compact
-                  />
+              <article className="card sb-story-card sb-story-secondary">
+                <Link
+                  to={`/article/${thirdArticle.slug}`}
+                  className="sb-story-media-link"
+                  aria-label={thirdArticle.headline}
+                >
+                  <ArticleMediaThumb article={thirdArticle} />
                 </Link>
-                <div style={{ marginTop: '12px' }}>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
+                <div className="sb-story-body">
+                  <div className="sb-story-meta-row">
                     <span className="cat">{CATEGORY_LABELS[lang][thirdArticle.category]}</span>
-                    {thirdArticle.media && (
-                      <span className="pill" style={{ background: '#0b6b6b', color: '#fff', fontSize: '11px' }}>
-                        ▶ Includes Video
+                    {hasVideoMedia(thirdArticle) && (
+                      <span className="sb-inline-video-pill">▶ Video Report</span>
+                    )}
+                    {thirdArticle.isPaid && (
+                      <span className="pill sb-pill-muted" style={{ fontSize: '10px' }}>
+                        {thirdArticle.paidDisclosureLabel || 'Partner Disclosure'}
                       </span>
                     )}
-                    <span className="meta">{thirdArticle.time}</span>
+                    <span className="meta">
+                      {thirdArticle.time} · {thirdArticle.readTime}
+                    </span>
                   </div>
-                  <h3 style={{ fontSize: '17px', lineHeight: '1.35', margin: '0 0 8px' }}>
-                    <Link to={`/article/${thirdArticle.slug}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                      {lang === 'hi' && thirdArticle.headlineHi ? thirdArticle.headlineHi : thirdArticle.headline}
+                  <h3 className="sb-story-title">
+                    <Link to={`/article/${thirdArticle.slug}`}>
+                      {lang === 'hi' && thirdArticle.headlineHi
+                        ? thirdArticle.headlineHi
+                        : thirdArticle.headline}
                     </Link>
                   </h3>
-                  <p style={{ margin: '0 0 10px', fontSize: '13px', lineHeight: '1.5', color: 'var(--muted)' }}>
+                  <p className="sb-story-deck sb-clamp-3">
                     {lang === 'hi' && thirdArticle.deckHi ? thirdArticle.deckHi : thirdArticle.deck}
                   </p>
-                  <div className="src" style={{ fontSize: '12px' }}>
-                    <b>{thirdArticle.ticker}</b> · {thirdArticle.author}
+                  <div className="src sb-story-source">
+                    <b>{thirdArticle.ticker}</b>
+                    <span>{thirdArticle.author}</span>
                   </div>
                 </div>
               </article>
             )}
           </div>
+
+          {extraFeaturedArticle && (
+            <div style={{ marginTop: '14px' }}>
+              <article className="card sb-story-card" style={{ padding: '14px 18px' }}>
+                <div className="sb-story-meta-row">
+                  <span className="cat">{CATEGORY_LABELS[lang][extraFeaturedArticle.category]}</span>
+                  {hasVideoMedia(extraFeaturedArticle) && (
+                    <span className="sb-inline-video-pill">▶ Video</span>
+                  )}
+                  {extraFeaturedArticle.isPaid && (
+                    <span className="pill sb-pill-muted" style={{ fontSize: '10px' }}>
+                      {extraFeaturedArticle.paidDisclosureLabel || 'Partner Disclosure'}
+                    </span>
+                  )}
+                  <span className="meta">
+                    {extraFeaturedArticle.time} · {extraFeaturedArticle.readTime}
+                  </span>
+                </div>
+                <h3 className="sb-story-title" style={{ marginTop: '4px' }}>
+                  <Link to={`/article/${extraFeaturedArticle.slug}`}>
+                    {lang === 'hi' && extraFeaturedArticle.headlineHi
+                      ? extraFeaturedArticle.headlineHi
+                      : extraFeaturedArticle.headline}
+                  </Link>
+                </h3>
+              </article>
+            </div>
+          )}
         </section>
 
         {/* ── TWO COLUMN EDITORIAL & INTELLIGENCE LAYOUT ──────────────── */}
         <div className="layout">
-          <div>
+          <div style={{ minWidth: 0 }}>
             {/* ── THE MOST MATERIAL DEVELOPMENTS FEED ────────────────────── */}
-            <section className="card" style={{ marginTop: 0 }}>
-              <div className="sec-h" style={{ marginBottom: '16px' }}>
+            <section className="card snap sb-material-card" style={{ marginTop: 0 }}>
+              <div className="sec-h">
                 <div>
-                  <h2 style={{ margin: 0 }}>
+                  <h2>
                     THE MOST <span style={{ color: 'var(--teal)' }}>MATERIAL DEVELOPMENTS</span>
                   </h2>
-                  <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
-                    Material dispatches that alter capital allocations, valuations, or regulatory compliance.
+                  <p className="sb-sec-sub">
+                    Material dispatches that alter capital allocations, valuations, or regulatory
+                    compliance.
                   </p>
                 </div>
-                <Link
-                  to="/intelligence"
-                  className="meta"
-                  style={{ color: 'var(--teal)', fontWeight: 600, whiteSpace: 'nowrap' }}
-                >
+                <Link to="/intelligence" className="sb-sec-link">
                   Full Intelligence Pulse ({MARKET_PULSE_ITEMS.length}) →
                 </Link>
               </div>
@@ -231,24 +290,14 @@ export function HomePage() {
                         borderBottom: '1px solid var(--border)',
                       }}
                     >
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: '6px',
-                          alignItems: 'center',
-                          marginBottom: '6px',
-                        }}
-                      >
+                      <div className="sb-pulse-row-head">
                         <span
                           className="pill"
                           style={{ background: catColor, color: '#fff', fontSize: '11px' }}
                         >
                           {item.category}
                         </span>
-                        <span className="meta" style={{ marginLeft: 'auto', fontSize: '12px' }}>
-                          {item.timestamp}
-                        </span>
+                        <span className="meta">{item.timestamp}</span>
                       </div>
 
                       {item.relatedPath ? (
@@ -280,15 +329,7 @@ export function HomePage() {
                         </strong>
                       )}
 
-                      <p
-                        style={{
-                          margin: '0 0 8px',
-                          fontSize: '14px',
-                          lineHeight: '1.55',
-                          color: 'var(--text)',
-                          opacity: 0.9,
-                        }}
-                      >
+                      <p className="sb-pulse-summary sb-clamp-3">
                         {summary}
                       </p>
 
@@ -333,11 +374,11 @@ export function HomePage() {
               <div className="sec-h">
                 <div>
                   <h2>{copy.latest}</h2>
-                  <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+                  <p className="sb-sec-sub">
                     Continuous reporting across Indian markets, corporations and policy.
                   </p>
                 </div>
-                <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
+                <Link to="/news" className="sb-sec-link">
                   All Stories →
                 </Link>
               </div>
@@ -362,14 +403,45 @@ export function HomePage() {
               <div>
                 {filteredNews.slice(0, shownNewsCount).map((item) => {
                   const isSaved = bookmarks.has(item.headline);
+                  const matchedArticle = articlesCatalog.find((a) => a.slug === item.slug);
+                  const isVideo = hasVideoMedia(matchedArticle ?? item);
+                  const displayTitle =
+                    lang === 'hi' && item.headlineHi ? item.headlineHi : item.headline;
+
                   return (
-                    <div className="item" key={item.id}>
-                      <span className="t">{item.time}</span>
-                      <div>
-                        <span className="cat">{CATEGORY_LABELS[lang][item.category]}</span>
-                        <Link className="h" to={`/article/${item.slug}`}>
-                          {lang === 'hi' && item.headlineHi ? item.headlineHi : item.headline}
+                    <div className="item sb-dispatch-item" key={item.id}>
+                      {matchedArticle ? (
+                        <Link
+                          to={`/article/${item.slug}`}
+                          className="sb-dispatch-thumb-link"
+                          aria-label={displayTitle}
+                        >
+                          <ArticleMediaThumb article={matchedArticle} compact />
                         </Link>
+                      ) : (
+                        <span className="t">{item.time}</span>
+                      )}
+                      <div className="sb-dispatch-content">
+                        <div className="sb-story-meta-row">
+                          <span className="cat">{CATEGORY_LABELS[lang][item.category]}</span>
+                          {isVideo && (
+                            <span className="sb-inline-video-pill">▶ Video</span>
+                          )}
+                          {item.isPaid && (
+                            <span className="pill sb-pill-muted" style={{ fontSize: '10px' }}>
+                              {item.paidDisclosureLabel || 'Partner Disclosure'}
+                            </span>
+                          )}
+                          <span className="meta">{item.time}</span>
+                        </div>
+                        <Link className="h" to={`/article/${item.slug}`}>
+                          {displayTitle}
+                        </Link>
+                        {(lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary) && (
+                          <p className="sb-dispatch-summary sb-clamp-2">
+                            {lang === 'hi' && item.summaryHi ? item.summaryHi : item.summary}
+                          </p>
+                        )}
                         <div className="src">
                           <b>{item.ticker}</b>
                           {item.sourceNote}
@@ -414,7 +486,7 @@ export function HomePage() {
           </div>
 
           {/* ── ASIDE MODULES ──────────────────────────────────────────── */}
-          <aside>
+          <aside className="sb-home-aside">
             {/* The Change Ledger Teaser */}
             <section className="card snap" style={{ marginBottom: '20px' }}>
               <div className="sec-h">
@@ -433,12 +505,12 @@ export function HomePage() {
             <section className="card snap" style={{ marginBottom: '20px' }}>
               <div className="sec-h">
                 <h2>IPO INTELLIGENCE</h2>
-                <Link to="/ipo" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
+                <Link to="/ipo" className="sb-sec-link">
                   View All →
                 </Link>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {IPO_ALL_RECORDS.slice(0, 3).map((rec) => (
+                {ipoRecords.slice(0, 3).map((rec) => (
                   <Link
                     key={rec.id}
                     to={`/ipo/${rec.slug}`}
@@ -452,14 +524,14 @@ export function HomePage() {
                       border: '1px solid var(--border)',
                     }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '4px' }}>
                       <strong style={{ fontSize: '13px' }}>{rec.company}</strong>
-                      <span className="pill" style={{ fontSize: '10px' }}>
+                      <span className="pill" style={{ fontSize: '10px', flexShrink: 0 }}>
                         {IPO_STATUS_LABELS[lang][rec.status]}
                       </span>
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                      Issue: {rec.issueSize ?? 'TBD'} · {rec.segment}
+                      Issue: {rec.issueSize ?? 'Not announced'} · {rec.segment}
                     </div>
                   </Link>
                 ))}

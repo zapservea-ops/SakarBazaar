@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { SakarBazaarProvider } from './context/SakarBazaarContext';
+import { AdminPage } from './pages/AdminPage';
 import { ArticleDetailPage } from './pages/ArticleDetailPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { ChangeLedgerPage } from './pages/ChangeLedgerPage';
@@ -38,6 +39,7 @@ export default function App() {
               <Route path="/explainers/:slug" element={<ExplainerDetailPage />} />
               <Route path="/search" element={<SearchPage />} />
               <Route path="/editorial" element={<EditorialDeskPage />} />
+              <Route path="/admin" element={<AdminPage />} />
               <Route path="/newsroom" element={<Navigate to="/editorial" replace />} />
               <Route path="/about" element={<SupportingPage page="about" />} />
               <Route path="/disclaimer" element={<SupportingPage page="disclaimer" />} />

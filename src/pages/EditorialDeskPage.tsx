@@ -289,7 +289,7 @@ export function EditorialDeskPage() {
     setTagsText((docItem.tags ?? []).join(', '));
     setKeywordsText((docItem.keywords ?? []).join(', '));
     setEntitiesText((docItem.entities ?? []).join(', '));
-    setLanguage(docItem.language);
+    setLanguage(docItem.language === 'hi' ? 'hi' : 'en');
     setMediaId(docItem.mediaId ?? '');
     setFeedback({ text: `Loaded "${docItem.title}" into editor.`, tone: 'ok' });
   }

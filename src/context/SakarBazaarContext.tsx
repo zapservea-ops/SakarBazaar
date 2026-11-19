@@ -22,11 +22,15 @@ import {
   auth,
   checkEditorAuthorization,
   fetchPublishedEditorialArticles,
+  fetchPublicVerifiedIpos,
+  refreshAuthSessionToken,
   signInWithGoogle,
   signOutUser,
 } from '../lib/firebase';
 import type {
+  AdminRole,
   ArticleRecord,
+  IpoRow,
   LanguageCode,
   MarketDataResponse,
   MarketInstrument,
@@ -34,23 +38,22 @@ import type {
   ThemeMode,
   TranslationStrings,
 } from '../types/sakarbazaar';
+import {
+  getPermissionsForRole,
+  type AdminPermissionMatrix,
+} from '../utils/adminPermissions';
 import { getIstMarketStatus } from '../utils/marketFormat';
 import {
   MarketAutoRefreshController,
   markClientMarketDataStale,
   resolveFrontendRefreshIntervalMs,
 } from '../utils/marketPolling';
+import { isArticlePubliclyVisible } from '../utils/newsLifecycle';
 
 const THEME_KEY = 'sb-theme';
 const LANG_KEY = 'sb-lang';
 const BOOKMARKS_KEY = 'sb-bookmarks';
 const WATCHLIST_KEY = 'sb-watchlist';
-
-const VALID_WATCHLIST_IDS = new Set([
-  ...MARKET_INSTRUMENTS.map((m) => m.id),
-  ...CURATED_INDIAN_EQUITIES.map((e) => e.id),
-  ...IPO_ALL_RECORDS.map((ipo) => ipo.id),
-]);
 
 function readInitialTheme(): ThemeMode {
   try {
@@ -75,17 +78,14 @@ function readInitialLang(): LanguageCode {
   return 'en';
 }
 
-function readStoredSet(key: string, allowedIds?: Set<string>): Set<string> {
+function readStoredSet(key: string): Set<string> {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         return new Set(
-          parsed.filter(
-            (item): item is string =>
-              typeof item === 'string' && (!allowedIds || allowedIds.has(item)),
-          ),
+          parsed.filter((item): item is string => typeof item === 'string' && item.length > 0),
         );
       }
     }
@@ -131,6 +131,7 @@ interface SakarBazaarContextValue {
   mobileSearchRef: RefObject<HTMLInputElement | null>;
   articlesCatalog: ArticleRecord[];
   newsItems: NewsItem[];
+  ipoRecords: IpoRow[];
   marketData: MarketDataResponse;
   marketLoading: boolean;
   marketError: string | null;
@@ -139,6 +140,8 @@ interface SakarBazaarContextValue {
   authReady: boolean;
   isAuthorizedEditor: boolean;
   editorRole: 'admin' | 'editor' | 'none';
+  adminRole: AdminRole;
+  permissions: AdminPermissionMatrix;
   toggleTheme: () => void;
   toggleLang: () => void;
   toggleBookmark: (key: string) => void;
@@ -146,7 +149,9 @@ interface SakarBazaarContextValue {
   setSearchTerm: (value: string) => void;
   setMobileSearchOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   refreshArticles: () => Promise<void>;
+  refreshIpos: () => Promise<void>;
   refreshMarketData: () => Promise<void>;
+  refreshAuthSession: () => Promise<void>;
   signInEditor: () => Promise<void>;
   signOutEditor: () => Promise<void>;
 }
@@ -158,13 +163,12 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   const [lang, setLang] = useState<LanguageCode>(readInitialLang);
   const [now, setNow] = useState<Date>(() => new Date());
   const [bookmarks, setBookmarks] = useState<Set<string>>(() => readStoredSet(BOOKMARKS_KEY));
-  const [watchlistIds, setWatchlistIds] = useState<Set<string>>(() =>
-    readStoredSet(WATCHLIST_KEY, VALID_WATCHLIST_IDS),
-  );
+  const [watchlistIds, setWatchlistIds] = useState<Set<string>>(() => readStoredSet(WATCHLIST_KEY));
   const [searchTerm, setSearchTerm] = useState('');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
   const [publishedRemoteArticles, setPublishedRemoteArticles] = useState<ArticleRecord[]>([]);
+  const [remoteVerifiedIpos, setRemoteVerifiedIpos] = useState<IpoRow[]>([]);
   const [marketData, setMarketData] = useState<MarketDataResponse>(buildFallbackMarketData);
   const [marketLoading, setMarketLoading] = useState<boolean>(true);
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -173,6 +177,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
   const [isAuthorizedEditor, setIsAuthorizedEditor] = useState(false);
   const [editorRole, setEditorRole] = useState<'admin' | 'editor' | 'none'>('none');
+  const [adminRole, setAdminRole] = useState<AdminRole>('none');
 
   const desktopSearchRef = useRef<HTMLInputElement | null>(null);
   const mobileSearchRef = useRef<HTMLInputElement | null>(null);
@@ -296,9 +301,15 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     setPublishedRemoteArticles(remote);
   }, []);
 
+  const refreshIpos = useCallback(async () => {
+    const remoteIpos = await fetchPublicVerifiedIpos();
+    setRemoteVerifiedIpos(remoteIpos);
+  }, []);
+
   useEffect(() => {
     void refreshArticles();
-  }, [refreshArticles]);
+    void refreshIpos();
+  }, [refreshArticles, refreshIpos]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
@@ -306,28 +317,51 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
       const authStatus = await checkEditorAuthorization(nextUser);
       setIsAuthorizedEditor(authStatus.authorized);
       setEditorRole(authStatus.role);
+      setAdminRole(authStatus.adminRole);
       setAuthReady(true);
     });
     return () => unsubscribe();
   }, []);
 
+  const currentMinuteMs = Math.floor(now.getTime() / 60_000) * 60_000;
+
   const articlesCatalog = useMemo(() => {
     const seenSlugs = new Set<string>();
     const combined: ArticleRecord[] = [];
     for (const remote of publishedRemoteArticles) {
+      if (!isArticlePubliclyVisible(remote, currentMinuteMs)) continue;
       if (!seenSlugs.has(remote.slug)) {
         seenSlugs.add(remote.slug);
         combined.push(remote);
       }
     }
     for (const base of ARTICLES_CATALOG) {
+      if (!isArticlePubliclyVisible(base, currentMinuteMs)) continue;
       if (!seenSlugs.has(base.slug)) {
         seenSlugs.add(base.slug);
         combined.push(base);
       }
     }
     return combined;
-  }, [publishedRemoteArticles]);
+  }, [publishedRemoteArticles, currentMinuteMs]);
+
+  const ipoRecords = useMemo(() => {
+    const seenSlugs = new Set<string>();
+    const merged: IpoRow[] = [];
+    for (const remote of remoteVerifiedIpos) {
+      if (!seenSlugs.has(remote.slug)) {
+        seenSlugs.add(remote.slug);
+        merged.push(remote);
+      }
+    }
+    for (const base of IPO_ALL_RECORDS) {
+      if (!seenSlugs.has(base.slug)) {
+        seenSlugs.add(base.slug);
+        merged.push(base);
+      }
+    }
+    return merged;
+  }, [remoteVerifiedIpos]);
 
   const newsItems: NewsItem[] = useMemo(
     () =>
@@ -345,7 +379,11 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
           sourceNote: article.sourceNote,
           verificationStatus: article.verificationStatus,
           summary: article.deck,
+          summaryHi: article.deckHi,
           paragraphs: article.sections.flatMap((sec) => sec.paragraphs),
+          media: article.media,
+          isPaid: article.isPaid,
+          paidDisclosureLabel: article.paidDisclosureLabel,
         })),
     [articlesCatalog],
   );
@@ -354,6 +392,8 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     () => [...marketData.indices, ...marketData.indicators, ...marketData.equities],
     [marketData],
   );
+
+  const permissions = useMemo(() => getPermissionsForRole(adminRole), [adminRole]);
 
   const copy = TRANSLATIONS[lang];
   const ui = UI_COPY[lang];
@@ -391,6 +431,17 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     setUser(loggedIn);
     setIsAuthorizedEditor(authStatus.authorized);
     setEditorRole(authStatus.role);
+    setAdminRole(authStatus.adminRole);
+  }
+
+  async function refreshAuthSession() {
+    await refreshAuthSessionToken();
+    const current = auth.currentUser;
+    const authStatus = await checkEditorAuthorization(current);
+    setUser(current);
+    setIsAuthorizedEditor(authStatus.authorized);
+    setEditorRole(authStatus.role);
+    setAdminRole(authStatus.adminRole);
   }
 
   async function signOutEditor() {
@@ -398,6 +449,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setIsAuthorizedEditor(false);
     setEditorRole('none');
+    setAdminRole('none');
   }
 
   return (
@@ -416,6 +468,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
         mobileSearchRef,
         articlesCatalog,
         newsItems,
+        ipoRecords,
         marketData,
         marketLoading,
         marketError,
@@ -424,6 +477,8 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
         authReady,
         isAuthorizedEditor,
         editorRole,
+        adminRole,
+        permissions,
         toggleTheme,
         toggleLang,
         toggleBookmark,
@@ -431,7 +486,9 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
         setSearchTerm,
         setMobileSearchOpen,
         refreshArticles,
+        refreshIpos,
         refreshMarketData,
+        refreshAuthSession,
         signInEditor,
         signOutEditor,
       }}

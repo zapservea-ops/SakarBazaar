@@ -8,6 +8,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { ALL_TRACKED_INSTRUMENTS } from './server/market-data/instruments.ts';
 import { MarketDataCacheService } from './server/market-data/cache.ts';
 import { createProviderAdapterFromEnv } from './server/market-data/provider.ts';
+import { checkOfficialIpoSources } from './server/ipo-sources/collector.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,7 +116,18 @@ async function isAuthorizedNewsroomEditor(
     const res = await fetch(docUrl, {
       headers: { Authorization: `Bearer ${idToken}` },
     });
-    return res.ok;
+    if (res.ok) return true;
+
+    const emailKey = email.trim().toLowerCase();
+    const allowlistUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents/authorizedEmails/${encodeURIComponent(emailKey)}`;
+    const allowRes = await fetch(allowlistUrl, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!allowRes.ok) return false;
+    const allowDoc = (await allowRes.json()) as {
+      fields?: { active?: { booleanValue?: boolean } };
+    };
+    return Boolean(allowDoc.fields?.active?.booleanValue);
   } catch {
     return false;
   }
@@ -160,6 +172,51 @@ async function startServer() {
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Unexpected market-data server error.',
+      });
+    }
+  });
+
+  app.post('/api/ipo-sources/check', async (req: Request, res: Response) => {
+    const clientIp = req.ip || 'local';
+    if (isRateLimited(clientIp)) {
+      res.status(429).json({ error: 'Too many requests. Please wait before re-checking sources.' });
+      return;
+    }
+
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (!token) {
+      res.status(401).json({ error: 'Authentication required for IPO source verification.' });
+      return;
+    }
+
+    const verifiedUser = await verifyFirebaseIdToken(token);
+    if (!verifiedUser) {
+      res.status(401).json({ error: 'Invalid or expired Firebase authentication token.' });
+      return;
+    }
+
+    const allowed = await isAuthorizedNewsroomEditor(
+      verifiedUser.uid,
+      verifiedUser.email,
+      verifiedUser.emailVerified,
+      token,
+    );
+    if (!allowed) {
+      res.status(403).json({
+        error: 'Only authorized Owner or Publisher accounts may trigger official IPO source checks.',
+      });
+      return;
+    }
+
+    try {
+      const forceRefresh = Boolean((req.body as { forceRefresh?: boolean } | undefined)?.forceRefresh);
+      const result = await checkOfficialIpoSources({ forceRefresh });
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({
+        error: err instanceof Error ? err.message : 'Unable to check official IPO portals.',
       });
     }
   });

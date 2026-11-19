@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { EditorialArt } from '../components/EditorialArt';
+import { ArticleMediaThumb } from '../components/ArticleMediaThumb';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS } from '../data/i18n';
 import { ALL_NEWS_CATEGORIES } from '../data/sampleData';
 import type { NewsCategory } from '../types/sakarbazaar';
+import { hasVideoMedia } from '../utils/articleMedia';
 import { filterArticlesByCategory } from '../utils/marketFormat';
 
 function resolveCategoryParam(rawParam?: string): NewsCategory {
@@ -96,7 +97,7 @@ export function NewsListPage() {
             ))}
           </div>
 
-          <label className="search" style={{ minWidth: '220px' }}>
+          <label className="search sb-news-search">
             <input
               type="search"
               value={searchTerm}
@@ -125,20 +126,27 @@ export function NewsListPage() {
                 lang === 'hi' && article.headlineHi ? article.headlineHi : article.headline;
               const displayDeck =
                 lang === 'hi' && article.deckHi ? article.deckHi : article.deck;
+              const isVideo = hasVideoMedia(article);
 
               return (
                 <article className="sb-news-card" key={article.id}>
-                  <Link to={`/article/${article.slug}`} aria-label={displayHeadline}>
-                    <EditorialArt
-                      variant={article.illustration}
-                      label={article.illustrationCaption}
-                      compact
-                    />
+                  <Link
+                    to={`/article/${article.slug}`}
+                    className="sb-news-thumb-link"
+                    aria-label={displayHeadline}
+                  >
+                    <ArticleMediaThumb article={article} compact />
                   </Link>
 
-                  <div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="sb-news-card-body">
+                    <div className="sb-story-meta-row">
                       <span className="cat">{CATEGORY_LABELS[lang][article.category]}</span>
+                      {isVideo && <span className="sb-inline-video-pill">▶ Video</span>}
+                      {article.isPaid && (
+                        <span className="pill sb-pill-muted" style={{ fontSize: '10px' }}>
+                          {article.paidDisclosureLabel || 'Partner Disclosure'}
+                        </span>
+                      )}
                       <span className="meta">
                         {article.publishedAt} · {article.readTime}
                       </span>
@@ -146,7 +154,7 @@ export function NewsListPage() {
                     <h3>
                       <Link to={`/article/${article.slug}`}>{displayHeadline}</Link>
                     </h3>
-                    <p>{displayDeck}</p>
+                    <p className="sb-clamp-3">{displayDeck}</p>
                     <div className="src">
                       <b>{article.ticker}</b>
                       {article.sourceNote} · {article.author}

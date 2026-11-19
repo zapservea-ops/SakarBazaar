@@ -26,7 +26,23 @@ export type EditorialWorkflowStatus =
   | 'Awaiting Verification'
   | 'Verified'
   | 'Published'
+  | 'Expired'
+  | 'Retained'
+  | 'Pending Deletion'
+  | 'Deletion In Progress'
+  | 'Deleted'
   | 'Archived';
+
+export type AdminRole = 'owner' | 'publisher' | 'none';
+export type DurationPreset = '7d' | '15d' | '30d' | '60d' | 'custom';
+export type FeaturedPlacement = 'none' | 'main' | 'secondary';
+export type DeletionStatus =
+  | 'none'
+  | 'pending_approval'
+  | 'approved'
+  | 'in_progress'
+  | 'partial_failure'
+  | 'deleted';
 
 import type {
   ExchangeSessionPhase,
@@ -119,10 +135,19 @@ export interface MediaAssetRecord {
   fileName: string;
   storagePath: string;
   publicUrl: string;
-  mediaType: 'video/mp4' | 'image/png' | 'image/jpeg' | 'image/webp';
+  posterUrl?: string;
+  mediaType: 'video/mp4' | 'video/youtube' | 'image/png' | 'image/jpeg' | 'image/webp';
   durationSec?: number;
   width?: number;
   height?: number;
+  sizeBytes?: number;
+  credit?: string;
+  usageRightsConfirmed?: boolean;
+  isPublic?: boolean;
+  expiresAtMs?: number | null;
+  youtubeVideoId?: string;
+  youtubeUrl?: string;
+  associatedArticleIds?: string[];
   title: string;
   caption: string;
   sourceNote: string;
@@ -140,9 +165,14 @@ export interface ArticleRecord {
   headlineHi?: string;
   deck: string;
   deckHi?: string;
+  sectionsHi?: ArticleSection[];
   author: string;
   authorRole: string;
   publishedAt: string;
+  publishedAtMs?: number | null;
+  expiresAtMs?: number | null;
+  durationPreset?: DurationPreset;
+  durationHours?: number;
   updatedAt: string;
   time: string;
   readTime: string;
@@ -165,8 +195,13 @@ export interface ArticleRecord {
   verificationChecklist?: string[];
   citations: ArticleCitation[];
   media?: MediaAssetRecord;
+  mediaId?: string;
   relatedSlugs: string[];
   isFeatured?: boolean;
+  featuredPlacement?: FeaturedPlacement;
+  featuredOrder?: number;
+  isPaid?: boolean;
+  paidDisclosureLabel?: string;
   isPopular?: boolean;
   isHomepageFeed?: boolean;
 }
@@ -183,7 +218,11 @@ export interface NewsItem {
   sourceNote: string;
   verificationStatus: VerificationStatus;
   summary: string;
+  summaryHi?: string;
   paragraphs: string[];
+  media?: MediaAssetRecord;
+  isPaid?: boolean;
+  paidDisclosureLabel?: string;
 }
 
 export interface IpoRow {
@@ -299,3 +338,244 @@ export interface AiGeneratedBriefPayload {
   keywords: string[];
   verificationChecklist: string[];
 }
+
+export interface AdminUserRecord {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: 'owner' | 'publisher' | 'admin' | 'editor';
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface AuthorizedEmailRecord {
+  id: string; // normalized lowercase email
+  email: string;
+  displayName: string;
+  role: 'owner' | 'publisher';
+  active: boolean;
+  addedByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface SystemSettingsRecord {
+  key: string;
+  defaultDurationPreset: DurationPreset;
+  expiringSoonThresholdHours: number;
+  maxImageSizeBytes: number;
+  requireBilingualPublish: boolean;
+  updatedByUid: string;
+  updatedAt?: unknown;
+}
+
+export interface StoredArticleDoc {
+  id: string;
+  title: string;
+  slug: string;
+  summary: string;
+  body: string;
+  enHeadline: string;
+  enSummary: string;
+  enBody: string;
+  hiHeadline: string;
+  hiSummary: string;
+  hiBody: string;
+  category: Exclude<NewsCategory, 'All'>;
+  tags: string[];
+  keywords: string[];
+  entities: string[];
+  author: string;
+  status: EditorialWorkflowStatus;
+  verificationStatus: VerificationStatus;
+  sourceName: string;
+  sourceUrl?: string;
+  officialSources?: string[];
+  mediaId?: string;
+  youtubeUrl?: string;
+  youtubeVideoId?: string;
+  youtubeTitle?: string;
+  language: 'en' | 'hi' | 'bilingual';
+  durationPreset?: DurationPreset;
+  durationHours?: number;
+  publishedAt?: string;
+  publishedAtMs?: number | null;
+  expiresAtMs?: number | null;
+  expiresAt?: unknown;
+  retainedPrivate?: boolean;
+  featuredPlacement?: FeaturedPlacement;
+  featuredOrder?: number;
+  isPaid?: boolean;
+  paidCampaignId?: string;
+  paidDisclosureLabel?: string;
+  deletionStatus?: DeletionStatus;
+  deletionApprovedByUid?: string;
+  deletionApprovedByEmail?: string;
+  deletionApprovedAtMs?: number | null;
+  deletionError?: string;
+  deletionAttempts?: number;
+  createdByUid: string;
+  updatedByUid?: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface StoredMediaAssetDoc {
+  id: string;
+  fileName: string;
+  storagePath?: string;
+  mediaType: 'video/mp4' | 'video/youtube' | 'image/png' | 'image/jpeg' | 'image/webp';
+  duration?: number;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  credit?: string;
+  usageRightsConfirmed?: boolean;
+  isPublic?: boolean;
+  expiresAtMs?: number | null;
+  expiresAt?: unknown;
+  poster?: string;
+  captions?: string;
+  transcript?: string;
+  associatedArticleId?: string;
+  associatedArticleIds?: string[];
+  youtubeVideoId?: string;
+  youtubeUrl?: string;
+  uploadedByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface StoredMediaPayloadDoc {
+  id: string;
+  mediaId: string;
+  mimeType: 'image/jpeg' | 'image/webp' | 'image/png';
+  sizeBytes: number;
+  dataUrl: string;
+  isPublic: boolean;
+  expiresAt?: unknown;
+  uploadedByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface PaidCampaignRecord {
+  id: string;
+  clientName: string;
+  articleId?: string;
+  articleTitle?: string;
+  startDate?: string;
+  endDate?: string;
+  durationHours?: number;
+  placementPreference?: string;
+  internalStatus: 'Planned' | 'Active' | 'Paused' | 'Completed' | 'Cancelled';
+  disclosureEnabled: boolean;
+  disclosureLabel?: string;
+  commercialNotes?: string;
+  createdByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface ManagedIpoRecord {
+  id: string;
+  companyName: string;
+  slug: string;
+  segment: IpoSegment;
+  status: 'Awaiting Verification' | 'Upcoming' | 'Open' | 'Closed' | 'Listed';
+  issueSize?: string;
+  priceBand?: string;
+  lotSize?: string;
+  filingDate?: string;
+  openingDate?: string;
+  closingDate?: string;
+  allotmentDate?: string;
+  listingDate?: string;
+  sellingShareholder?: string;
+  offerType?: string;
+  summary?: string;
+  officialDocuments?: string[];
+  sourceName?: string;
+  sourceUrl?: string;
+  verificationStatus: 'awaiting_verification' | 'verified';
+  lastVerifiedAt?: string;
+  updatedByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface IpoSourceDiffItem {
+  field: string;
+  label: string;
+  previousValue: string;
+  detectedValue: string;
+}
+
+export interface IpoSourceReviewRecord {
+  id: string;
+  companyName: string;
+  targetIpoId?: string;
+  segment: IpoSegment;
+  reviewStatus: 'Needs Review' | 'Approved' | 'Rejected';
+  sourceName: string;
+  sourceUrl?: string;
+  checkedAt: string;
+  diffs: IpoSourceDiffItem[];
+  detectedSummary?: string;
+  reviewedByUid?: string;
+  reviewedByEmail?: string;
+  reviewedAt?: string;
+  createdByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface AuditLogRecord {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  actorUid: string;
+  actorEmail: string;
+  previousStatus?: string;
+  nextStatus: string;
+  summary: string;
+  createdAtMs?: number;
+  createdAt?: unknown;
+}
+
+export interface SakarBazaarBackupBundle {
+  schemaVersion: '1.0.0';
+  app: 'SakarBazaar';
+  exportedAt: string;
+  exportedByUid: string;
+  exportedByEmail: string;
+  notes: {
+    includesPhotographs: true;
+    excludesYouTubeVideoFiles: true;
+    youtubeNote: string;
+  };
+  counts: {
+    articles: number;
+    media: number;
+    mediaPayloads: number;
+    paidCampaigns: number;
+    ipos: number;
+    ipoSourceReviews: number;
+    auditLogs: number;
+    authorizedEmails: number;
+    systemSettings: number;
+  };
+  data: {
+    articles: StoredArticleDoc[];
+    media: StoredMediaAssetDoc[];
+    mediaPayloads: StoredMediaPayloadDoc[];
+    paidCampaigns: PaidCampaignRecord[];
+    ipos: ManagedIpoRecord[];
+    ipoSourceReviews: IpoSourceReviewRecord[];
+    auditLogs: AuditLogRecord[];
+    authorizedEmails: AuthorizedEmailRecord[];
+    systemSettings: SystemSettingsRecord[];
+  };
+}
+

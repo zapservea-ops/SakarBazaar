@@ -3,13 +3,11 @@ import { Link, useParams } from 'react-router-dom';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { IPO_STATUS_LABELS } from '../data/i18n';
-import { IPO_ALL_RECORDS } from '../data/sampleData';
-
 export function IpoDetailPage() {
   const { slug } = useParams();
-  const { lang, ui, watchlistIds, toggleWatchlist } = useSakarBazaar();
+  const { lang, ui, ipoRecords, watchlistIds, toggleWatchlist } = useSakarBazaar();
 
-  const ipo = IPO_ALL_RECORDS.find((item) => item.slug === slug);
+  const ipo = ipoRecords.find((item) => item.slug === slug);
 
   useEffect(() => {
     document.title = ipo

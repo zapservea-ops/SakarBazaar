@@ -3,8 +3,6 @@ import { Link } from 'react-router-dom';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS, IPO_STATUS_LABELS } from '../data/i18n';
-import { IPO_ALL_RECORDS } from '../data/sampleData';
-
 export function WatchlistPage() {
   const {
     lang,
@@ -12,6 +10,7 @@ export function WatchlistPage() {
     bookmarks,
     watchlistIds,
     articlesCatalog,
+    ipoRecords,
     toggleBookmark,
     toggleWatchlist,
   } = useSakarBazaar();
@@ -21,8 +20,8 @@ export function WatchlistPage() {
   }, [ui.watchlistPageTitle]);
 
   const savedArticles = articlesCatalog.filter((a) => bookmarks.has(a.headline));
-  const trackedIpos = IPO_ALL_RECORDS.filter((ipo) => watchlistIds.has(ipo.id));
-  const untrackedIpos = IPO_ALL_RECORDS.filter((ipo) => !watchlistIds.has(ipo.id));
+  const trackedIpos = ipoRecords.filter((ipo) => watchlistIds.has(ipo.id));
+  const untrackedIpos = ipoRecords.filter((ipo) => !watchlistIds.has(ipo.id));
 
   return (
     <main id="top" className="wrap sb-page">

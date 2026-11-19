@@ -3,15 +3,14 @@ import { Link } from 'react-router-dom';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { IPO_STATUS_LABELS } from '../data/i18n';
-import { IPO_ALL_RECORDS } from '../data/sampleData';
 import type { IpoSegment, IpoStatus } from '../types/sakarbazaar';
 import { filterIpoRows, getVerifiedIpoCounts } from '../utils/marketFormat';
 
 const SEGMENTS: IpoSegment[] = ['Mainboard', 'SME'];
-const STATUS_FILTERS: ('All' | IpoStatus)[] = ['All', 'Proposed OFS', 'Open', 'Upcoming', 'Closed'];
+const STATUS_FILTERS: ('All' | IpoStatus)[] = ['All', 'Proposed OFS', 'Open', 'Upcoming', 'Closed', 'Listed'];
 
 export function IpoDeskPage() {
-  const { lang, ui, watchlistIds, toggleWatchlist } = useSakarBazaar();
+  const { lang, ui, ipoRecords, watchlistIds, toggleWatchlist } = useSakarBazaar();
   const [segment, setSegment] = useState<IpoSegment>('Mainboard');
   const [statusFilter, setStatusFilter] = useState<'All' | IpoStatus>('All');
 
@@ -19,13 +18,13 @@ export function IpoDeskPage() {
     document.title = `${ui.ipoPageTitle} – SakarBazaar`;
   }, [ui.ipoPageTitle]);
 
-  const counts = getVerifiedIpoCounts(IPO_ALL_RECORDS);
-  const rows = filterIpoRows(IPO_ALL_RECORDS, segment, statusFilter);
+  const counts = getVerifiedIpoCounts(ipoRecords);
+  const rows = filterIpoRows(ipoRecords, segment, statusFilter);
 
   const summaryStats = [
     { id: 'open', value: String(counts.confirmedOpen), label: 'Open issues' },
     { id: 'upcoming', value: String(counts.confirmedUpcoming), label: 'Upcoming issues' },
-    { id: 'total', value: String(IPO_ALL_RECORDS.length), label: 'Total tracked issues' },
+    { id: 'total', value: String(ipoRecords.length), label: 'Total tracked issues' },
   ];
 
   return (
@@ -120,14 +119,14 @@ export function IpoDeskPage() {
                             : row.segment}
                         </small>
                       </td>
-                      <td className="num">{row.issueSize ?? 'Not disclosed'}</td>
-                      <td className="num">{row.priceBand ?? 'Not disclosed'}</td>
+                      <td className="num">{row.issueSize ?? 'Not announced'}</td>
+                      <td className="num">{row.priceBand ?? 'Not announced'}</td>
                       <td style={{ fontSize: '13px' }}>
                         {row.openDate && row.closeDate
                           ? `${row.openDate} – ${row.closeDate}`
-                          : 'Pending official schedule'}
+                          : 'Not announced'}
                       </td>
-                      <td>{row.offerType ?? 'Not disclosed'}</td>
+                      <td>{row.offerType ?? 'Not announced'}</td>
                       <td className="n">
                         <button
                           type="button"

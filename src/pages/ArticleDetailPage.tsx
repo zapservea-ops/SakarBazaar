@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ArticleMediaThumb } from '../components/ArticleMediaThumb';
 import { ArticleVideoPlayer } from '../components/ArticleVideoPlayer';
 import { EditorialArt } from '../components/EditorialArt';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS } from '../data/i18n';
+import { getImageMedia, getVideoMedia, hasVideoMedia } from '../utils/articleMedia';
 
 export function ArticleDetailPage() {
   const { slug } = useParams();
@@ -54,6 +56,10 @@ export function ArticleDetailPage() {
   const displayHeadline =
     lang === 'hi' && article.headlineHi ? article.headlineHi : article.headline;
   const displayDeck = lang === 'hi' && article.deckHi ? article.deckHi : article.deck;
+  const displaySections =
+    lang === 'hi' && article.sectionsHi && article.sectionsHi.length > 0
+      ? article.sectionsHi
+      : article.sections;
   const isSaved = bookmarks.has(article.headline);
 
   const relatedArticles = article.relatedSlugs
@@ -95,7 +101,7 @@ export function ArticleDetailPage() {
     const bodyText = [
       displayHeadline,
       displayDeck,
-      ...article.sections.flatMap((s) => [s.heading, ...s.paragraphs]),
+      ...displaySections.flatMap((s) => [s.heading, ...s.paragraphs]),
     ].join('. ');
 
     try {
@@ -135,6 +141,11 @@ export function ArticleDetailPage() {
             >
               {CATEGORY_LABELS[lang][article.category]}
             </Link>
+            {article.isPaid && (
+              <span className="pill sb-pill-muted">
+                {article.paidDisclosureLabel || 'Partner Disclosure'}
+              </span>
+            )}
             <span className="meta">{article.readTime}</span>
           </div>
 
@@ -181,19 +192,41 @@ export function ArticleDetailPage() {
             </div>
           )}
 
-          {article.media ? (
-            <ArticleVideoPlayer media={article.media} />
-          ) : (
-            <figure style={{ margin: '0 0 20px' }}>
-              <EditorialArt
-                variant={article.illustration}
-                label={article.illustrationCaption}
-              />
-              <figcaption className="meta" style={{ marginTop: '8px' }}>
-                {article.illustrationCaption}
-              </figcaption>
-            </figure>
-          )}
+          {(() => {
+            const videoMedia = getVideoMedia(article);
+            const imageMedia = videoMedia ? null : getImageMedia(article);
+
+            if (videoMedia) {
+              return <ArticleVideoPlayer media={videoMedia} />;
+            }
+            if (imageMedia) {
+              return (
+                <figure className="sb-article-hero-figure">
+                  <div className="sb-article-hero-media">
+                    <img
+                      src={imageMedia.publicUrl}
+                      alt={imageMedia.title || displayHeadline}
+                      className="sb-article-hero-img"
+                    />
+                  </div>
+                  <figcaption className="meta" style={{ marginTop: '8px' }}>
+                    {imageMedia.caption}
+                  </figcaption>
+                </figure>
+              );
+            }
+            return (
+              <figure style={{ margin: '0 0 20px' }}>
+                <EditorialArt
+                  variant={article.illustration}
+                  label={article.illustrationCaption}
+                />
+                <figcaption className="meta" style={{ marginTop: '8px' }}>
+                  {article.illustrationCaption}
+                </figcaption>
+              </figure>
+            );
+          })()}
 
           <aside className="sb-takeaways" aria-label={ui.keyTakeaways}>
             <h3>{ui.keyTakeaways}</h3>
@@ -205,7 +238,7 @@ export function ArticleDetailPage() {
           </aside>
 
           <div className="sb-article-body">
-            {article.sections.map((section, idx) => (
+            {displaySections.map((section, idx) => (
               <section key={idx}>
                 <h2>{section.heading}</h2>
                 {section.paragraphs.map((p, pIdx) => (
@@ -309,7 +342,7 @@ export function ArticleDetailPage() {
             <section style={{ marginTop: '32px' }} aria-labelledby="related-heading">
               <div className="sec-h">
                 <h2 id="related-heading">{ui.relatedStories}</h2>
-                <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
+                <Link to="/news" className="sb-sec-link">
                   {ui.allStories} →
                 </Link>
               </div>
@@ -320,11 +353,23 @@ export function ArticleDetailPage() {
                     className="card sb-related-card"
                     key={rel.id}
                   >
-                    <span className="cat">{CATEGORY_LABELS[lang][rel.category]}</span>
-                    <h4>{lang === 'hi' && rel.headlineHi ? rel.headlineHi : rel.headline}</h4>
-                    <span className="meta">
-                      {rel.publishedAt} · {rel.readTime}
-                    </span>
+                    <div className="sb-related-media">
+                      <ArticleMediaThumb article={rel} />
+                    </div>
+                    <div className="sb-related-card-body">
+                      <div className="sb-story-meta-row">
+                        <span className="cat">{CATEGORY_LABELS[lang][rel.category]}</span>
+                        {hasVideoMedia(rel) && (
+                          <span className="sb-inline-video-pill">▶ Video</span>
+                        )}
+                      </div>
+                      <h4 className="sb-clamp-3">
+                        {lang === 'hi' && rel.headlineHi ? rel.headlineHi : rel.headline}
+                      </h4>
+                      <span className="meta">
+                        {rel.publishedAt} · {rel.readTime}
+                      </span>
+                    </div>
                   </Link>
                 ))}
               </div>
@@ -343,7 +388,12 @@ export function ArticleDetailPage() {
                 style={{ gridTemplateColumns: '1fr', gap: '4px' }}
                 key={pop.id}
               >
-                <span className="cat">{CATEGORY_LABELS[lang][pop.category]}</span>
+                <div className="sb-story-meta-row">
+                  <span className="cat">{CATEGORY_LABELS[lang][pop.category]}</span>
+                  {hasVideoMedia(pop) && (
+                    <span className="sb-inline-video-pill">▶ Video</span>
+                  )}
+                </div>
                 <Link
                   to={`/article/${pop.slug}`}
                   style={{ fontWeight: 600, lineHeight: 1.35 }}

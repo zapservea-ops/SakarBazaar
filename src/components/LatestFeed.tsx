@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS } from '../data/i18n';
 import type { HomepageNewsCategory, NewsItem } from '../types/sakarbazaar';
+import { hasVideoMedia } from '../utils/articleMedia';
 
 interface LatestFeedProps {
   title: string;
@@ -67,8 +68,11 @@ export function LatestFeed({
               <div className="item" key={item.id}>
                 <span className="t">{item.time}</span>
                 <div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="sb-story-meta-row">
                     <span className="cat">{CATEGORY_LABELS[lang][item.category]}</span>
+                    {hasVideoMedia(item) && (
+                      <span className="sb-inline-video-pill">▶ Video</span>
+                    )}
                   </div>
                   <Link className="h" to={`/article/${item.slug}`}>
                     {displayHeadline}

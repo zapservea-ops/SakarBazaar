@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { ArticleMediaThumb } from '../components/ArticleMediaThumb';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS, IPO_STATUS_LABELS } from '../data/i18n';
-import { EXPLAINERS_CATALOG, IPO_ALL_RECORDS } from '../data/sampleData';
+import { EXPLAINERS_CATALOG } from '../data/sampleData';
+import { hasVideoMedia } from '../utils/articleMedia';
 import {
   PREDEFINED_SEARCH_TERMS,
   extractSuggestedKeywords,
@@ -38,7 +40,7 @@ function storeRecentSearch(query: string) {
 
 export function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { lang, ui, articlesCatalog, allMarketInstruments, watchlistIds, toggleWatchlist, setSearchTerm } =
+  const { lang, ui, articlesCatalog, ipoRecords, allMarketInstruments, watchlistIds, toggleWatchlist, setSearchTerm } =
     useSakarBazaar();
   const initialQuery = searchParams.get('q') ?? '';
   const [queryInput, setQueryInput] = useState(initialQuery);
@@ -61,8 +63,8 @@ export function SearchPage() {
   }, [initialQuery, ui.searchPageTitle]);
 
   const suggestedKeywords = useMemo(
-    () => extractSuggestedKeywords(articlesCatalog, IPO_ALL_RECORDS, EXPLAINERS_CATALOG, 12),
-    [articlesCatalog],
+    () => extractSuggestedKeywords(articlesCatalog, ipoRecords, EXPLAINERS_CATALOG, 12),
+    [articlesCatalog, ipoRecords],
   );
 
   const results = useMemo(
@@ -70,11 +72,11 @@ export function SearchPage() {
       searchSiteContent(
         queryInput,
         articlesCatalog,
-        IPO_ALL_RECORDS,
+        ipoRecords,
         EXPLAINERS_CATALOG,
         allMarketInstruments,
       ),
-    [queryInput, articlesCatalog, allMarketInstruments],
+    [queryInput, articlesCatalog, ipoRecords, allMarketInstruments],
   );
 
   function handleSubmit(e: FormEvent) {
@@ -107,7 +109,7 @@ export function SearchPage() {
 
   const totalIndexCount =
     articlesCatalog.length +
-    IPO_ALL_RECORDS.length +
+    ipoRecords.length +
     EXPLAINERS_CATALOG.length +
     allMarketInstruments.length;
 
@@ -333,35 +335,39 @@ export function SearchPage() {
                   {ui.tabArticles} ({results.articles.length})
                 </h2>
               </div>
-              {results.articles.map((article) => (
-                <div className="sb-search-result-row" key={article.id}>
-                  <div>
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: '8px',
-                        alignItems: 'center',
-                        flexWrap: 'wrap',
-                        marginBottom: '4px',
-                      }}
-                    >
-                      <span className="cat">{CATEGORY_LABELS[lang][article.category]}</span>
-                    </div>
+              {results.articles.map((article) => {
+                const displayHeadline =
+                  lang === 'hi' && article.headlineHi ? article.headlineHi : article.headline;
+                const displayDeck =
+                  lang === 'hi' && article.deckHi ? article.deckHi : article.deck;
+                const isVideo = hasVideoMedia(article);
+
+                return (
+                  <div className="sb-search-result-row sb-search-article-row" key={article.id}>
                     <Link
                       to={`/article/${article.slug}`}
-                      style={{ display: 'block', fontWeight: 600 }}
+                      className="sb-search-thumb-link"
+                      aria-label={displayHeadline}
                     >
-                      {lang === 'hi' && article.headlineHi ? article.headlineHi : article.headline}
+                      <ArticleMediaThumb article={article} compact />
                     </Link>
-                    <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--muted)' }}>
-                      {lang === 'hi' && article.deckHi ? article.deckHi : article.deck}
-                    </p>
+                    <div className="sb-search-article-body">
+                      <div className="sb-story-meta-row">
+                        <span className="cat">{CATEGORY_LABELS[lang][article.category]}</span>
+                        {isVideo && <span className="sb-inline-video-pill">▶ Video</span>}
+                        <span className="meta">{article.readTime}</span>
+                      </div>
+                      <Link
+                        to={`/article/${article.slug}`}
+                        className="sb-search-article-title"
+                      >
+                        {displayHeadline}
+                      </Link>
+                      <p className="sb-search-article-snippet sb-clamp-2">{displayDeck}</p>
+                    </div>
                   </div>
-                  <span className="meta" style={{ whiteSpace: 'nowrap' }}>
-                    {article.readTime}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </section>
           )}
 

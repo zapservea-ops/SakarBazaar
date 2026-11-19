@@ -90,6 +90,7 @@ export const MEDIA_ASSETS: MediaAssetRecord[] = [
     fileName: 'WhatsApp_Video_2026-11-17_at_11.35.07_82d5da66.mp4',
     storagePath: 'public/assets/aistudio/WhatsApp_Video_2026-11-17_at_11.35.07_82d5da66.mp4',
     publicUrl: '/assets/aistudio/WhatsApp_Video_2026-11-17_at_11.35.07_82d5da66.mp4',
+    posterUrl: '/assets/aistudio/mcl_ipo_poster.jpg',
     mediaType: 'video/mp4',
     durationSec: 20,
     width: 1024,
@@ -107,6 +108,7 @@ export const MEDIA_ASSETS: MediaAssetRecord[] = [
     fileName: 'WhatsApp_Video_2026-11-16_at_12.11.13.mp4',
     storagePath: 'public/assets/aistudio/WhatsApp_Video_2026-11-16_at_12.11.13.mp4',
     publicUrl: '/assets/aistudio/WhatsApp_Video_2026-11-16_at_12.11.13.mp4',
+    posterUrl: '/assets/aistudio/mcl_ipo_poster.jpg',
     mediaType: 'video/mp4',
     durationSec: 20,
     width: 1024,
@@ -122,15 +124,28 @@ export const MEDIA_ASSETS: MediaAssetRecord[] = [
     fileName: 'nhc_foods_q2_fy27.mp4',
     storagePath: 'public/assets/aistudio/nhc_foods_q2_fy27.mp4',
     publicUrl: '/assets/aistudio/nhc_foods_q2_fy27.mp4',
+    posterUrl: '/assets/aistudio/nhc_foods_poster.jpg',
     mediaType: 'video/mp4',
-    durationSec: 15,
-    width: 720,
-    height: 1280,
+    durationSec: 43,
+    width: 848,
+    height: 478,
     title: 'NHC Foods Q2 FY27 Financial Highlights & Expansion Brief',
     caption:
       'Video coverage reporting NHC Foods Limited Q2 FY27 consolidated income surge of 333%, PAT surge of 1,518%, and strategic 99.98% partnership acquisition in Sachmaas Foods.',
     sourceNote: 'Supplied video dispatch · Corroborated with BSE Corporate Announcement (BSE: 517554)',
     associatedArticleSlug: 'nhc-foods-q2-fy27-results-total-income-surges-pat-jumps-strategic-acquisition',
+  },
+  {
+    id: 'media-india-egypt-modi',
+    fileName: 'modi-egypt_6ce0cd7d.webp',
+    storagePath: 'public/assets/aistudio/modi-egypt_6ce0cd7d.webp',
+    publicUrl: '/assets/aistudio/modi-egypt_6ce0cd7d.webp',
+    mediaType: 'image/webp',
+    title: 'Prime Minister Narendra Modi and Egyptian President Abdel Fattah El-Sisi during India–Egypt bilateral engagement',
+    caption:
+      'India and Egypt bilateral cooperation in clean energy, electric mobility, fintech, and industrial trade.',
+    sourceNote: 'Supplied editorial photo · India–Egypt Bilateral Coverage',
+    associatedArticleSlug: 'india-egypt-explore-cooperation-evs-fintech-renewable-energy',
   },
 ];
 
@@ -490,6 +505,7 @@ export const ARTICLES_CATALOG: ArticleRecord[] = [
       'Confirm any formal joint statements or MoUs before marking as verified reporting.',
     ],
     citations: [OFFICIAL_PORTAL_REFERENCES.pib, OFFICIAL_PORTAL_REFERENCES.commerce],
+    media: MEDIA_ASSETS[3],
     relatedSlugs: ['mahanadi-coalfields-ipo-proposed-offer-financial-details'],
     isFeatured: false,
     isPopular: true,
@@ -643,6 +659,7 @@ export const NEWS_ITEMS: NewsItem[] = ARTICLES_CATALOG.filter(
   verificationStatus: article.verificationStatus,
   summary: article.deck,
   paragraphs: article.sections.flatMap((sec) => sec.paragraphs),
+  media: article.media,
 }));
 
 // Keep confirmed IPO records strictly separated from unverified submissions.

@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { ArticleMediaThumb } from '../components/ArticleMediaThumb';
 import { PageBackNav } from '../components/PageBackNav';
 import { useSakarBazaar } from '../context/SakarBazaarContext';
 import { CATEGORY_LABELS } from '../data/i18n';
 import { MARKET_PULSE_ITEMS } from '../data/sampleData';
 import type { MarketDataStatus } from '../types/sakarbazaar';
+import { hasVideoMedia } from '../utils/articleMedia';
 import {
   formatIndianNumber,
   formatIstDisplayTimestamp,
@@ -329,7 +331,7 @@ export function MarketsPage() {
           </section>
 
           {/* ── MARKET INTELLIGENCE PULSE ───────────────────────────────── */}
-          <section className="card" style={{ marginTop: 0 }}>
+          <section className="card snap sb-material-card" style={{ marginTop: 0 }}>
             <div className="sec-h" style={{ marginBottom: '16px' }}>
               <div>
                 <h2 style={{ margin: 0 }}>
@@ -428,15 +430,7 @@ export function MarketsPage() {
                     )}
 
                     {/* Summary */}
-                    <p
-                      style={{
-                        margin: '0 0 8px',
-                        fontSize: '14px',
-                        lineHeight: '1.6',
-                        color: 'var(--text)',
-                        opacity: 0.85,
-                      }}
-                    >
+                    <p className="sb-pulse-summary sb-clamp-3">
                       {summary}
                     </p>
 
@@ -482,7 +476,7 @@ export function MarketsPage() {
           <section className="card feed" style={{ marginTop: 0 }}>
             <div className="sec-h">
               <h2>{ui.marketNewsHeading}</h2>
-              <Link to="/news" className="meta" style={{ color: 'var(--teal)', fontWeight: 600 }}>
+              <Link to="/news" className="sb-sec-link">
                 {ui.allStories} →
               </Link>
             </div>
@@ -490,13 +484,27 @@ export function MarketsPage() {
             <div>
               {articlesCatalog.map((item) => {
                 const isSaved = bookmarks.has(item.headline);
+                const displayHeadline =
+                  lang === 'hi' && item.headlineHi ? item.headlineHi : item.headline;
                 return (
-                  <div className="item" key={item.id}>
-                    <span className="t">{item.time}</span>
-                    <div>
-                      <span className="cat">{CATEGORY_LABELS[lang][item.category]}</span>
+                  <div className="item sb-dispatch-item" key={item.id}>
+                    <Link
+                      to={`/article/${item.slug}`}
+                      className="sb-dispatch-thumb-link"
+                      aria-label={displayHeadline}
+                    >
+                      <ArticleMediaThumb article={item} compact />
+                    </Link>
+                    <div className="sb-dispatch-content">
+                      <div className="sb-story-meta-row">
+                        <span className="cat">{CATEGORY_LABELS[lang][item.category]}</span>
+                        {hasVideoMedia(item) && (
+                          <span className="sb-inline-video-pill">▶ Video</span>
+                        )}
+                        <span className="meta">{item.time}</span>
+                      </div>
                       <Link className="h" to={`/article/${item.slug}`}>
-                        {lang === 'hi' && item.headlineHi ? item.headlineHi : item.headline}
+                        {displayHeadline}
                       </Link>
                       <div className="src">
                         <b>{item.ticker}</b>

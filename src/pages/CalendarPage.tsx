@@ -25,7 +25,7 @@ const SEBI_FILTERS: SebiFilter[] = ['All', 'Mainboard', 'SME', 'Upcoming', 'Open
 const MACRO_CATEGORY_FILTERS: CalendarCategoryFilter[] = ['All', 'IPO', 'RBI', 'Economy', 'Markets'];
 
 export function CalendarPage() {
-  const { copy, lang, ui } = useSakarBazaar();
+  const { lang, ui, ipoRecords } = useSakarBazaar();
   const [activeTab, setActiveTab] = useState<TopCalendarTab>('sebi-filings');
 
   // SEBI Filings state
@@ -42,8 +42,36 @@ export function CalendarPage() {
     document.title = 'SEBI IPO Filings & Economic Calendar – SakarBazaar';
   }, []);
 
-  // Filter SEBI Filings
-  const uniqueFilings = deduplicateSebiFilings(SEBI_IPO_FILINGS);
+  // Merge verified Firestore IPOs cleanly alongside static SEBI filings
+  const baseFilings = deduplicateSebiFilings(SEBI_IPO_FILINGS);
+  const seenNames = new Set(baseFilings.map((f) => f.companyName.toLowerCase()));
+  const managedFilings: SebiIpoFiling[] = ipoRecords
+    .filter((rec) => rec.verificationStatus === 'verified' && !seenNames.has(rec.company.toLowerCase()))
+    .map((rec) => ({
+      id: `cal-ipo-${rec.id}`,
+      companyName: rec.company,
+      documentType: rec.openDate ? 'RHP' : 'DRHP',
+      category: rec.segment,
+      filingDate: rec.openDate ? 'Confirmed Schedule' : 'Not announced',
+      issueSize: rec.issueSize ?? undefined,
+      priceBand: rec.priceBand ?? null,
+      openDate: rec.openDate ?? null,
+      closeDate: rec.closeDate ?? null,
+      scheduleStatus:
+        rec.status === 'Open'
+          ? 'Open'
+          : rec.status === 'Closed'
+            ? 'Closed'
+            : rec.openDate
+              ? 'Upcoming'
+              : 'Awaiting Schedule Notice',
+      leadManagers: [],
+      sebiDocumentUrl: rec.sourceUrl || SEBI_PUBLIC_ISSUES_SOURCE_URL,
+      lastCheckedDate: rec.lastVerifiedAt ? rec.lastVerifiedAt.slice(0, 10) : 'Verified',
+      summary: rec.summary,
+    }));
+
+  const uniqueFilings = [...managedFilings, ...baseFilings];
   const filteredSebiFilings = uniqueFilings.filter((f) => {
     // Category / Schedule filter
     if (sebiFilter === 'Mainboard' && f.category !== 'Mainboard') return false;

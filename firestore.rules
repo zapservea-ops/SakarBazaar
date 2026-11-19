@@ -10,6 +10,11 @@ service cloud.firestore {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function isValidEmailKey(id) {
+      return id is string && id.size() >= 5 && id.size() <= 200 &&
+        id.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -26,22 +31,32 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isBootstrappedAdmin() {
-      return isVerifiedUser() && request.auth.token.email == 'jeetsheetalpuri@gmail.com';
+    function isBootstrappedOwner() {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() == 'jeetsheetalpuri@gmail.com';
     }
 
-    function isAdmin() {
+    function isOwner() {
       return isVerifiedUser() && (
-        isBootstrappedAdmin() ||
+        isBootstrappedOwner() ||
         (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin')
+          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['owner', 'admin'])
       );
     }
 
-    function isEditor() {
+    function isEmailAllowlisted() {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
+        exists(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.active == true;
+    }
+
+    function isAuthorizedUser() {
       return isVerifiedUser() && (
-        isBootstrappedAdmin() ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        isBootstrappedOwner() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        isEmailAllowlisted()
       );
     }
 
@@ -51,57 +66,123 @@ service cloud.firestore {
 
     function isValidAdminUser(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'createdAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
         isValidId(data.uid) &&
         data.email is string && data.email.size() >= 5 && data.email.size() <= 200 &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
-        data.role in ['admin', 'editor'] &&
-        data.createdAt is timestamp;
+        data.role in ['owner', 'publisher', 'admin', 'editor'] &&
+        data.createdAt is timestamp &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidAuthorizedEmail(data) {
+      return data.keys().hasAll(['email', 'displayName', 'role', 'active', 'addedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['email', 'displayName', 'role', 'active', 'addedByUid', 'createdAt', 'updatedAt']) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 200 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.role in ['owner', 'publisher'] &&
+        data.active is bool &&
+        isValidId(data.addedByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSystemSetting(data) {
+      return data.keys().hasAll(['key', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'key', 'defaultDurationPreset', 'expiringSoonThresholdHours',
+          'maxImageSizeBytes', 'requireBilingualPublish', 'updatedByUid', 'updatedAt'
+        ]) &&
+        data.key is string && data.key.size() >= 2 && data.key.size() <= 64 &&
+        (!('defaultDurationPreset' in data) || data.defaultDurationPreset in ['7d', '15d', '30d', '60d', 'custom']) &&
+        (!('expiringSoonThresholdHours' in data) || (data.expiringSoonThresholdHours is number && data.expiringSoonThresholdHours >= 1 && data.expiringSoonThresholdHours <= 720)) &&
+        (!('maxImageSizeBytes' in data) || (data.maxImageSizeBytes is number && data.maxImageSizeBytes >= 10000 && data.maxImageSizeBytes <= 450000)) &&
+        (!('requireBilingualPublish' in data) || data.requireBilingualPublish is bool) &&
+        isValidId(data.updatedByUid) &&
+        data.updatedAt is timestamp;
     }
 
     function isValidArticle(data) {
       return data.keys().hasAll([
-          'title', 'slug', 'summary', 'body', 'category', 'author',
-          'status', 'verificationStatus', 'sourceName', 'language',
-          'createdByUid', 'updatedAt', 'createdAt'
+          'slug', 'category', 'author', 'status', 'verificationStatus',
+          'language', 'createdByUid', 'updatedAt', 'createdAt'
         ]) &&
         data.keys().hasOnly([
-          'title', 'slug', 'summary', 'body', 'category', 'tags', 'keywords',
-          'entities', 'author', 'status', 'verificationStatus', 'sourceName',
-          'sourceUrl', 'officialSources', 'mediaId', 'language', 'createdByUid',
-          'publishedAt', 'updatedAt', 'createdAt'
+          'title', 'slug', 'summary', 'body',
+          'enHeadline', 'enSummary', 'enBody',
+          'hiHeadline', 'hiSummary', 'hiBody',
+          'category', 'tags', 'keywords', 'entities', 'author',
+          'status', 'verificationStatus', 'sourceName', 'sourceUrl', 'officialSources',
+          'mediaId', 'youtubeUrl', 'youtubeVideoId', 'youtubeTitle', 'language',
+          'durationPreset', 'durationHours', 'publishedAt', 'publishedAtMs',
+          'expiresAtMs', 'expiresAt', 'retainedPrivate',
+          'featuredPlacement', 'featuredOrder',
+          'isPaid', 'paidCampaignId', 'paidDisclosureLabel',
+          'deletionStatus', 'deletionApprovedByUid', 'deletionApprovedByEmail',
+          'deletionApprovedAtMs', 'deletionError', 'deletionAttempts',
+          'createdByUid', 'updatedByUid', 'updatedAt', 'createdAt'
         ]) &&
-        data.title is string && data.title.size() >= 5 && data.title.size() <= 220 &&
+        (!('title' in data) || (data.title is string && data.title.size() <= 260)) &&
         data.slug is string && data.slug.size() >= 3 && data.slug.size() <= 160 && data.slug.matches('^[a-z0-9\\-]+$') &&
-        data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 800 &&
-        data.body is string && data.body.size() >= 20 && data.body.size() <= 20000 &&
+        (!('summary' in data) || (data.summary is string && data.summary.size() <= 1200)) &&
+        (!('body' in data) || (data.body is string && data.body.size() <= 25000)) &&
+        (!('enHeadline' in data) || (data.enHeadline is string && data.enHeadline.size() <= 260)) &&
+        (!('enSummary' in data) || (data.enSummary is string && data.enSummary.size() <= 1200)) &&
+        (!('enBody' in data) || (data.enBody is string && data.enBody.size() <= 25000)) &&
+        (!('hiHeadline' in data) || (data.hiHeadline is string && data.hiHeadline.size() <= 260)) &&
+        (!('hiSummary' in data) || (data.hiSummary is string && data.hiSummary.size() <= 1200)) &&
+        (!('hiBody' in data) || (data.hiBody is string && data.hiBody.size() <= 25000)) &&
         data.category in ['Markets', 'IPO', 'Corporate', 'Economy', 'RBI', 'Banking', 'Technology', 'Personal finance'] &&
         (!('tags' in data) || isValidStringList(data.tags, 12)) &&
         (!('keywords' in data) || isValidStringList(data.keywords, 20)) &&
         (!('entities' in data) || isValidStringList(data.entities, 20)) &&
         data.author is string && data.author.size() >= 2 && data.author.size() <= 120 &&
-        data.status in ['Draft', 'Awaiting Verification', 'Verified', 'Published', 'Archived'] &&
+        data.status in [
+          'Draft', 'Awaiting Verification', 'Verified', 'Published',
+          'Expired', 'Retained', 'Pending Deletion', 'Deletion In Progress', 'Deleted', 'Archived'
+        ] &&
         data.verificationStatus in ['awaiting_verification', 'verified', 'unverified'] &&
-        data.sourceName is string && data.sourceName.size() >= 2 && data.sourceName.size() <= 160 &&
+        (!('sourceName' in data) || (data.sourceName is string && data.sourceName.size() <= 160)) &&
         (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
         (!('officialSources' in data) || isValidStringList(data.officialSources, 8)) &&
         (!('mediaId' in data) || (data.mediaId is string && data.mediaId.size() <= 128)) &&
-        data.language in ['en', 'hi'] &&
-        isValidId(data.createdByUid) &&
+        (!('youtubeUrl' in data) || (data.youtubeUrl is string && data.youtubeUrl.size() <= 300)) &&
+        (!('youtubeVideoId' in data) || (data.youtubeVideoId is string && data.youtubeVideoId.size() <= 32)) &&
+        (!('youtubeTitle' in data) || (data.youtubeTitle is string && data.youtubeTitle.size() <= 200)) &&
+        data.language in ['en', 'hi', 'bilingual'] &&
+        (!('durationPreset' in data) || data.durationPreset in ['7d', '15d', '30d', '60d', 'custom']) &&
+        (!('durationHours' in data) || (data.durationHours is number && data.durationHours >= 1 && data.durationHours <= 43800)) &&
         (!('publishedAt' in data) || (data.publishedAt is string && data.publishedAt.size() <= 64)) &&
+        (!('publishedAtMs' in data) || data.publishedAtMs == null || data.publishedAtMs is number) &&
+        (!('expiresAtMs' in data) || data.expiresAtMs == null || data.expiresAtMs is number) &&
+        (!('expiresAt' in data) || data.expiresAt == null || data.expiresAt is timestamp) &&
+        (!('retainedPrivate' in data) || data.retainedPrivate is bool) &&
+        (!('featuredPlacement' in data) || data.featuredPlacement in ['none', 'main', 'secondary']) &&
+        (!('featuredOrder' in data) || data.featuredOrder is number) &&
+        (!('isPaid' in data) || data.isPaid is bool) &&
+        (!('paidCampaignId' in data) || (data.paidCampaignId is string && data.paidCampaignId.size() <= 128)) &&
+        (!('paidDisclosureLabel' in data) || (data.paidDisclosureLabel is string && data.paidDisclosureLabel.size() <= 64)) &&
+        (!('deletionStatus' in data) || data.deletionStatus in ['none', 'pending_approval', 'approved', 'in_progress', 'partial_failure', 'deleted']) &&
+        (!('deletionApprovedByUid' in data) || (data.deletionApprovedByUid is string && data.deletionApprovedByUid.size() <= 128)) &&
+        (!('deletionApprovedByEmail' in data) || (data.deletionApprovedByEmail is string && data.deletionApprovedByEmail.size() <= 200)) &&
+        (!('deletionApprovedAtMs' in data) || data.deletionApprovedAtMs == null || data.deletionApprovedAtMs is number) &&
+        (!('deletionError' in data) || (data.deletionError is string && data.deletionError.size() <= 500)) &&
+        (!('deletionAttempts' in data) || data.deletionAttempts is number) &&
+        isValidId(data.createdByUid) &&
+        (!('updatedByUid' in data) || isValidId(data.updatedByUid)) &&
         data.updatedAt is timestamp &&
         data.createdAt is timestamp;
     }
 
     function isValidIpoRecord(data) {
       return data.keys().hasAll([
-          'companyName', 'slug', 'segment', 'status', 'sourceName',
+          'companyName', 'slug', 'segment', 'status',
           'verificationStatus', 'updatedByUid', 'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'companyName', 'slug', 'segment', 'status', 'issueSize', 'priceBand',
-          'openingDate', 'closingDate', 'allotmentDate', 'listingDate',
-          'sellingShareholder', 'offerType', 'officialDocuments', 'sourceName',
+          'companyName', 'slug', 'segment', 'status', 'issueSize', 'priceBand', 'lotSize',
+          'filingDate', 'openingDate', 'closingDate', 'allotmentDate', 'listingDate',
+          'sellingShareholder', 'offerType', 'summary', 'officialDocuments', 'sourceName',
           'sourceUrl', 'verificationStatus', 'lastVerifiedAt', 'updatedByUid',
           'createdAt', 'updatedAt'
         ]) &&
@@ -111,18 +192,48 @@ service cloud.firestore {
         data.status in ['Awaiting Verification', 'Upcoming', 'Open', 'Closed', 'Listed'] &&
         (!('issueSize' in data) || (data.issueSize is string && data.issueSize.size() <= 100)) &&
         (!('priceBand' in data) || (data.priceBand is string && data.priceBand.size() <= 100)) &&
+        (!('lotSize' in data) || (data.lotSize is string && data.lotSize.size() <= 100)) &&
+        (!('filingDate' in data) || (data.filingDate is string && data.filingDate.size() <= 64)) &&
         (!('openingDate' in data) || (data.openingDate is string && data.openingDate.size() <= 64)) &&
         (!('closingDate' in data) || (data.closingDate is string && data.closingDate.size() <= 64)) &&
         (!('allotmentDate' in data) || (data.allotmentDate is string && data.allotmentDate.size() <= 64)) &&
         (!('listingDate' in data) || (data.listingDate is string && data.listingDate.size() <= 64)) &&
         (!('sellingShareholder' in data) || (data.sellingShareholder is string && data.sellingShareholder.size() <= 160)) &&
         (!('offerType' in data) || (data.offerType is string && data.offerType.size() <= 120)) &&
+        (!('summary' in data) || (data.summary is string && data.summary.size() <= 2000)) &&
         (!('officialDocuments' in data) || isValidStringList(data.officialDocuments, 6)) &&
-        data.sourceName is string && data.sourceName.size() >= 2 && data.sourceName.size() <= 160 &&
+        (!('sourceName' in data) || (data.sourceName is string && data.sourceName.size() <= 160)) &&
         (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
         data.verificationStatus in ['awaiting_verification', 'verified'] &&
         (!('lastVerifiedAt' in data) || (data.lastVerifiedAt is string && data.lastVerifiedAt.size() <= 64)) &&
         isValidId(data.updatedByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidIpoSourceReview(data) {
+      return data.keys().hasAll([
+          'companyName', 'segment', 'reviewStatus', 'sourceName', 'checkedAt',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'companyName', 'targetIpoId', 'segment', 'reviewStatus', 'sourceName',
+          'sourceUrl', 'checkedAt', 'diffs', 'detectedSummary', 'reviewedByUid',
+          'reviewedByEmail', 'reviewedAt', 'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 160 &&
+        (!('targetIpoId' in data) || (data.targetIpoId is string && data.targetIpoId.size() <= 128)) &&
+        data.segment in ['Mainboard', 'SME'] &&
+        data.reviewStatus in ['Needs Review', 'Approved', 'Rejected'] &&
+        data.sourceName is string && data.sourceName.size() >= 2 && data.sourceName.size() <= 160 &&
+        (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
+        data.checkedAt is string && data.checkedAt.size() <= 64 &&
+        (!('diffs' in data) || (data.diffs is list && data.diffs.size() <= 15)) &&
+        (!('detectedSummary' in data) || (data.detectedSummary is string && data.detectedSummary.size() <= 1200)) &&
+        (!('reviewedByUid' in data) || (data.reviewedByUid is string && data.reviewedByUid.size() <= 128)) &&
+        (!('reviewedByEmail' in data) || (data.reviewedByEmail is string && data.reviewedByEmail.size() <= 200)) &&
+        (!('reviewedAt' in data) || (data.reviewedAt is string && data.reviewedAt.size() <= 64)) &&
+        isValidId(data.createdByUid) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
@@ -152,23 +263,82 @@ service cloud.firestore {
     }
 
     function isValidMediaAsset(data) {
-      return data.keys().hasAll(['fileName', 'storagePath', 'mediaType', 'uploadedByUid', 'createdAt']) &&
+      return data.keys().hasAll(['fileName', 'mediaType', 'uploadedByUid', 'createdAt']) &&
         data.keys().hasOnly([
           'fileName', 'storagePath', 'mediaType', 'duration', 'width', 'height',
-          'poster', 'captions', 'transcript', 'associatedArticleId', 'uploadedByUid', 'createdAt'
+          'sizeBytes', 'credit', 'usageRightsConfirmed', 'isPublic', 'expiresAtMs', 'expiresAt',
+          'poster', 'captions', 'transcript', 'associatedArticleId', 'associatedArticleIds',
+          'youtubeVideoId', 'youtubeUrl', 'uploadedByUid', 'createdAt', 'updatedAt'
         ]) &&
-        data.fileName is string && data.fileName.size() >= 3 && data.fileName.size() <= 200 &&
-        data.storagePath is string && data.storagePath.size() >= 3 && data.storagePath.size() <= 300 &&
-        data.mediaType in ['video/mp4', 'image/png', 'image/jpeg', 'image/webp'] &&
+        data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200 &&
+        (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 300)) &&
+        data.mediaType in ['video/mp4', 'video/youtube', 'image/png', 'image/jpeg', 'image/webp'] &&
         (!('duration' in data) || data.duration is number) &&
         (!('width' in data) || data.width is number) &&
         (!('height' in data) || data.height is number) &&
+        (!('sizeBytes' in data) || (data.sizeBytes is number && data.sizeBytes >= 0 && data.sizeBytes <= 450000)) &&
+        (!('credit' in data) || (data.credit is string && data.credit.size() <= 200)) &&
+        (!('usageRightsConfirmed' in data) || data.usageRightsConfirmed is bool) &&
+        (!('isPublic' in data) || data.isPublic is bool) &&
+        (!('expiresAtMs' in data) || data.expiresAtMs == null || data.expiresAtMs is number) &&
+        (!('expiresAt' in data) || data.expiresAt == null || data.expiresAt is timestamp) &&
         (!('poster' in data) || (data.poster is string && data.poster.size() <= 300)) &&
         (!('captions' in data) || (data.captions is string && data.captions.size() <= 4000)) &&
         (!('transcript' in data) || (data.transcript is string && data.transcript.size() <= 10000)) &&
         (!('associatedArticleId' in data) || (data.associatedArticleId is string && data.associatedArticleId.size() <= 128)) &&
+        (!('associatedArticleIds' in data) || isValidStringList(data.associatedArticleIds, 50)) &&
+        (!('youtubeVideoId' in data) || (data.youtubeVideoId is string && data.youtubeVideoId.size() <= 32)) &&
+        (!('youtubeUrl' in data) || (data.youtubeUrl is string && data.youtubeUrl.size() <= 300)) &&
         isValidId(data.uploadedByUid) &&
-        data.createdAt is timestamp;
+        data.createdAt is timestamp &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidMediaPayload(data) {
+      return data.keys().hasAll([
+          'mediaId', 'mimeType', 'sizeBytes', 'dataUrl', 'isPublic',
+          'uploadedByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'mediaId', 'mimeType', 'sizeBytes', 'dataUrl', 'isPublic',
+          'expiresAt', 'uploadedByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.mediaId) &&
+        data.mimeType in ['image/jpeg', 'image/webp', 'image/png'] &&
+        data.sizeBytes is number && data.sizeBytes >= 1 && data.sizeBytes <= 450000 &&
+        data.dataUrl is string && data.dataUrl.size() >= 30 && data.dataUrl.size() <= 620000 &&
+        data.isPublic is bool &&
+        (!('expiresAt' in data) || data.expiresAt == null || data.expiresAt is timestamp) &&
+        isValidId(data.uploadedByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPaidCampaign(data) {
+      return data.keys().hasAll([
+          'clientName', 'internalStatus', 'disclosureEnabled',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'clientName', 'articleId', 'articleTitle', 'startDate', 'endDate',
+          'durationHours', 'placementPreference', 'internalStatus',
+          'disclosureEnabled', 'disclosureLabel', 'commercialNotes',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.clientName is string && data.clientName.size() >= 2 && data.clientName.size() <= 160 &&
+        (!('articleId' in data) || (data.articleId is string && data.articleId.size() <= 128)) &&
+        (!('articleTitle' in data) || (data.articleTitle is string && data.articleTitle.size() <= 260)) &&
+        (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 32)) &&
+        (!('endDate' in data) || (data.endDate is string && data.endDate.size() <= 32)) &&
+        (!('durationHours' in data) || data.durationHours is number) &&
+        (!('placementPreference' in data) || (data.placementPreference is string && data.placementPreference.size() <= 120)) &&
+        data.internalStatus in ['Planned', 'Active', 'Paused', 'Completed', 'Cancelled'] &&
+        data.disclosureEnabled is bool &&
+        (!('disclosureLabel' in data) || (data.disclosureLabel is string && data.disclosureLabel.size() <= 64)) &&
+        (!('commercialNotes' in data) || (data.commercialNotes is string && data.commercialNotes.size() <= 4000)) &&
+        isValidId(data.createdByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
     }
 
     function isValidAuditLog(data) {
@@ -180,14 +350,21 @@ service cloud.firestore {
           'action', 'entityType', 'entityId', 'actorUid', 'actorEmail',
           'previousStatus', 'nextStatus', 'summary', 'createdAt'
         ]) &&
-        data.action in ['create_draft', 'ai_brief', 'mark_awaiting_verification', 'verify', 'publish', 'archive', 'update'] &&
-        data.entityType in ['article', 'ipo', 'media', 'marketInstrument'] &&
+        data.action in [
+          'create_draft', 'ai_brief', 'mark_awaiting_verification', 'verify',
+          'publish', 'archive', 'update', 'extend_duration', 'retain_private',
+          'restore_article', 'approve_delete', 'start_delete', 'complete_delete',
+          'partial_delete_failure', 'retry_delete', 'ipo_source_check',
+          'ipo_review_approve', 'ipo_review_reject', 'export_backup',
+          'restore_backup', 'permission_update', 'paid_update', 'media_upload', 'media_delete'
+        ] &&
+        data.entityType in ['article', 'ipo', 'ipoReview', 'media', 'paidCampaign', 'marketInstrument', 'system', 'backup'] &&
         isValidId(data.entityId) &&
         isValidId(data.actorUid) &&
         data.actorEmail is string && data.actorEmail.size() >= 5 && data.actorEmail.size() <= 200 &&
         (!('previousStatus' in data) || (data.previousStatus is string && data.previousStatus.size() <= 48)) &&
         data.nextStatus is string && data.nextStatus.size() >= 2 && data.nextStatus.size() <= 48 &&
-        data.summary is string && data.summary.size() >= 3 && data.summary.size() <= 300 &&
+        data.summary is string && data.summary.size() >= 3 && data.summary.size() <= 400 &&
         data.createdAt is timestamp;
     }
 
@@ -202,121 +379,181 @@ service cloud.firestore {
     }
 
     match /admins/{userId} {
-      allow get: if isValidId(userId) && ((isVerifiedUser() && request.auth.uid == userId) || isAdmin());
-      allow list: if isBootstrappedAdmin();
-      allow create: if isValidId(userId) && isAdmin() && isValidAdminUser(incoming()) &&
-        incoming().uid == userId && incoming().createdAt == request.time;
-      allow update: if isValidId(userId) && isAdmin() && isValidAdminUser(incoming()) &&
+      allow get: if isValidId(userId) && ((isVerifiedUser() && request.auth.uid == userId) || isOwner());
+      allow list: if isOwner();
+      allow create: if isValidId(userId) && isValidAdminUser(incoming()) &&
+        incoming().uid == userId &&
+        incoming().createdAt == request.time &&
+        (
+          isOwner() ||
+          (
+            request.auth.uid == userId &&
+            isEmailAllowlisted() &&
+            incoming().email.lower() == request.auth.token.email.lower() &&
+            incoming().role == get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.role
+          )
+        );
+      allow update: if isValidId(userId) && isOwner() && isValidAdminUser(incoming()) &&
         incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(userId) && isOwner() && userId != request.auth.uid;
+    }
+
+    match /authorizedEmails/{emailKey} {
+      allow get: if isValidEmailKey(emailKey) && (
+        isOwner() ||
+        (isVerifiedUser() && request.auth.token.email is string && request.auth.token.email.lower() == emailKey)
+      );
+      allow list: if isOwner();
+      allow create: if isValidEmailKey(emailKey) && isOwner() && isValidAuthorizedEmail(incoming()) &&
+        incoming().email.lower() == emailKey &&
+        incoming().addedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidEmailKey(emailKey) && isOwner() && isValidAuthorizedEmail(incoming()) &&
+        incoming().email.lower() == emailKey &&
         incoming().createdAt == existing().createdAt &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role']);
-      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+        incoming().updatedAt == request.time;
+      allow delete: if isValidEmailKey(emailKey) && isOwner() &&
+        emailKey != 'jeetsheetalpuri@gmail.com';
+    }
+
+    match /systemSettings/{settingId} {
+      allow get, list: if isAuthorizedUser();
+      allow create: if isValidId(settingId) && isOwner() && isValidSystemSetting(incoming()) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId) && isOwner() && isValidSystemSetting(incoming()) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(settingId) && isOwner();
     }
 
     match /articles/{articleId} {
-      allow get: if isValidId(articleId) && (existing().status == 'Published' || isEditor());
-      allow list: if resource.data.status == 'Published' ||
-        isBootstrappedAdmin() ||
-        (isVerifiedUser() && resource.data.createdByUid == request.auth.uid);
-      allow create: if isValidId(articleId) && isEditor() && isValidArticle(incoming()) &&
+      allow get: if isValidId(articleId) && (
+        isAuthorizedUser() ||
+        (
+          existing().status == 'Published' &&
+          (!('expiresAt' in existing()) || (existing().expiresAt is timestamp && existing().expiresAt > request.time)) &&
+          (!('deletionStatus' in existing()) || existing().deletionStatus == 'none')
+        )
+      );
+      allow list: if resource.data.status == 'Published' || isAuthorizedUser();
+      allow create: if isValidId(articleId) && isAuthorizedUser() && isValidArticle(incoming()) &&
         incoming().createdByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        (incoming().status in ['Draft', 'Awaiting Verification'] || isAdmin());
-      allow update: if isValidId(articleId) && isEditor() && isValidArticle(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(articleId) && isAuthorizedUser() && isValidArticle(incoming()) &&
         incoming().createdByUid == existing().createdByUid &&
         incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time &&
-        (
-          isAdmin() ||
-          (
-            existing().status != 'Archived' &&
-            incoming().status in ['Draft', 'Awaiting Verification'] &&
-            incoming().verificationStatus == 'awaiting_verification' &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'title', 'summary', 'body', 'category', 'tags', 'keywords', 'entities',
-              'sourceName', 'sourceUrl', 'mediaId', 'status', 'verificationStatus', 'updatedAt'
-            ])
-          )
-        );
-      allow delete: if isValidId(articleId) && isAdmin();
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(articleId) && isAuthorizedUser();
     }
 
     match /ipos/{ipoId} {
-      allow get: if isValidId(ipoId) && (existing().verificationStatus == 'verified' || isEditor());
-      allow list: if resource.data.verificationStatus == 'verified' ||
-        isBootstrappedAdmin() ||
-        (isVerifiedUser() && resource.data.updatedByUid == request.auth.uid);
-      allow create: if isValidId(ipoId) && isEditor() && isValidIpoRecord(incoming()) &&
+      allow get: if isValidId(ipoId) && (existing().verificationStatus == 'verified' || isAuthorizedUser());
+      allow list: if resource.data.verificationStatus == 'verified' || isAuthorizedUser();
+      allow create: if isValidId(ipoId) && isAuthorizedUser() && isValidIpoRecord(incoming()) &&
         incoming().updatedByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time &&
-        (incoming().verificationStatus == 'awaiting_verification' || isAdmin());
-      allow update: if isValidId(ipoId) && isEditor() && isValidIpoRecord(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(ipoId) && isAuthorizedUser() && isValidIpoRecord(incoming()) &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        incoming().updatedByUid == request.auth.uid &&
-        (
-          isAdmin() ||
-          (
-            incoming().verificationStatus == 'awaiting_verification' &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'status', 'issueSize', 'priceBand', 'openingDate', 'closingDate',
-              'allotmentDate', 'listingDate', 'sellingShareholder', 'offerType',
-              'sourceName', 'sourceUrl', 'updatedByUid', 'updatedAt'
-            ])
-          )
-        );
-      allow delete: if isValidId(ipoId) && isAdmin();
+        incoming().updatedByUid == request.auth.uid;
+      allow delete: if isValidId(ipoId) && isAuthorizedUser();
+    }
+
+    match /ipoSourceReviews/{reviewId} {
+      allow get, list: if isAuthorizedUser();
+      allow create: if isValidId(reviewId) && isAuthorizedUser() && isValidIpoSourceReview(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(reviewId) && isAuthorizedUser() && isValidIpoSourceReview(incoming()) &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(reviewId) && isAuthorizedUser();
     }
 
     match /marketInstruments/{instrumentId} {
       allow get: if isValidId(instrumentId);
       allow list: if true;
-      allow create: if isValidId(instrumentId) && isAdmin() && isValidMarketInstrument(incoming()) &&
+      allow create: if isValidId(instrumentId) && isAuthorizedUser() && isValidMarketInstrument(incoming()) &&
         incoming().updatedByUid == request.auth.uid &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(instrumentId) && isAdmin() && isValidMarketInstrument(incoming()) &&
+      allow update: if isValidId(instrumentId) && isAuthorizedUser() && isValidMarketInstrument(incoming()) &&
         incoming().updatedByUid == request.auth.uid &&
-        incoming().updatedAt == request.time &&
-        incoming().diff(existing()).affectedKeys().hasOnly([
-          'name', 'currentValue', 'change', 'changePercent', 'source',
-          'freshnessStatus', 'updatedByUid', 'updatedAt'
-        ]);
-      allow delete: if isValidId(instrumentId) && isAdmin();
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(instrumentId) && isOwner();
     }
 
     match /media/{mediaId} {
-      allow get: if isValidId(mediaId);
-      allow list: if true;
-      allow create: if isValidId(mediaId) && isEditor() && isValidMediaAsset(incoming()) &&
+      allow get: if isValidId(mediaId) && (
+        isAuthorizedUser() ||
+        (
+          existing().isPublic == true &&
+          (!('expiresAt' in existing()) || existing().expiresAt == null || (existing().expiresAt is timestamp && existing().expiresAt > request.time))
+        )
+      );
+      allow list: if resource.data.isPublic == true || isAuthorizedUser();
+      allow create: if isValidId(mediaId) && isAuthorizedUser() && isValidMediaAsset(incoming()) &&
         incoming().uploadedByUid == request.auth.uid &&
         incoming().createdAt == request.time;
-      allow update: if isValidId(mediaId) && isEditor() && isValidMediaAsset(incoming()) &&
+      allow update: if isValidId(mediaId) && isAuthorizedUser() && isValidMediaAsset(incoming()) &&
+        incoming().uploadedByUid == existing().uploadedByUid &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(mediaId) && isAuthorizedUser();
+    }
+
+    match /mediaPayloads/{mediaId} {
+      allow get: if isValidId(mediaId) && (
+        isAuthorizedUser() ||
+        (
+          existing().isPublic == true &&
+          (!('expiresAt' in existing()) || existing().expiresAt == null || (existing().expiresAt is timestamp && existing().expiresAt > request.time))
+        )
+      );
+      allow list: if isAuthorizedUser();
+      allow create: if isValidId(mediaId) && isAuthorizedUser() && isValidMediaPayload(incoming()) &&
+        incoming().uploadedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(mediaId) && isAuthorizedUser() && isValidMediaPayload(incoming()) &&
         incoming().uploadedByUid == existing().uploadedByUid &&
         incoming().createdAt == existing().createdAt &&
-        (
-          isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['captions', 'transcript', 'associatedArticleId'])
-        );
-      allow delete: if isValidId(mediaId) && isAdmin();
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(mediaId) && isAuthorizedUser();
+    }
+
+    match /paidCampaigns/{campaignId} {
+      allow get, list: if isAuthorizedUser();
+      allow create: if isValidId(campaignId) && isAuthorizedUser() && isValidPaidCampaign(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(campaignId) && isAuthorizedUser() && isValidPaidCampaign(incoming()) &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(campaignId) && isAuthorizedUser();
     }
 
     match /auditLogs/{logId} {
-      allow get: if isValidId(logId) && isEditor();
-      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && resource.data.actorUid == request.auth.uid);
-      allow create: if isValidId(logId) && isEditor() && isValidAuditLog(incoming()) &&
+      allow get, list: if isAuthorizedUser();
+      allow create: if isValidId(logId) && isAuthorizedUser() && isValidAuditLog(incoming()) &&
         incoming().actorUid == request.auth.uid &&
         incoming().createdAt == request.time;
       allow update, delete: if false;
     }
 
     match /contactSubmissions/{submissionId} {
-      allow get: if isValidId(submissionId) && isAdmin();
-      allow list: if isBootstrappedAdmin();
+      allow get: if isValidId(submissionId) && isOwner();
+      allow list: if isOwner();
       allow create: if isValidId(submissionId) && isValidContactSubmission(incoming()) &&
         incoming().createdAt == request.time;
-      allow update, delete: if isValidId(submissionId) && isAdmin();
+      allow update, delete: if isValidId(submissionId) && isOwner();
     }
   }
 }

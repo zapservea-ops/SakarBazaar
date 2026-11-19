@@ -2,62 +2,185 @@
   "entities": {
     "AdminUser": {
       "title": "AdminUser",
-      "description": "Authorized SakarBazaar newsroom administrator or editor profile",
+      "description": "Authorized SakarBazaar Owner or Publisher profile",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 200 },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
-        "role": { "type": "string", "enum": ["admin", "editor"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "role": { "type": "string", "enum": ["owner", "publisher", "admin", "editor"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "displayName", "role", "createdAt"]
     },
-    "Article": {
-      "title": "Article",
-      "description": "Newsroom editorial article with verification workflow and source attribution",
+    "AuthorizedEmail": {
+      "title": "AuthorizedEmail",
+      "description": "Owner-managed email allowlist for authorizing the Publisher Google account",
       "type": "object",
       "properties": {
-        "title": { "type": "string", "minLength": 5, "maxLength": 220 },
+        "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 200 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["owner", "publisher"] },
+        "active": { "type": "boolean" },
+        "addedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "displayName", "role", "active", "addedByUid", "createdAt", "updatedAt"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Owner-managed system, quota, and editorial settings",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "defaultDurationPreset": { "type": "string", "enum": ["7d", "15d", "30d", "60d", "custom"] },
+        "expiringSoonThresholdHours": { "type": "number" },
+        "maxImageSizeBytes": { "type": "number" },
+        "requireBilingualPublish": { "type": "boolean" },
+        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key", "updatedByUid", "updatedAt"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "Shared bilingual (English + Hindi) newsroom article with lifecycle, elapsed-hour expiry, featured placement, paid disclosure, media, and deletion tracking",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 260 },
         "slug": { "type": "string", "minLength": 3, "maxLength": 160, "pattern": "^[a-z0-9\\-]+$" },
-        "summary": { "type": "string", "minLength": 10, "maxLength": 800 },
-        "body": { "type": "string", "minLength": 20, "maxLength": 20000 },
+        "summary": { "type": "string", "maxLength": 1200 },
+        "body": { "type": "string", "maxLength": 25000 },
+        "enHeadline": { "type": "string", "maxLength": 260 },
+        "enSummary": { "type": "string", "maxLength": 1200 },
+        "enBody": { "type": "string", "maxLength": 25000 },
+        "hiHeadline": { "type": "string", "maxLength": 260 },
+        "hiSummary": { "type": "string", "maxLength": 1200 },
+        "hiBody": { "type": "string", "maxLength": 25000 },
         "category": { "type": "string", "enum": ["Markets", "IPO", "Corporate", "Economy", "RBI", "Banking", "Technology", "Personal finance"] },
-        "tags": { "type": "array", "description": "Up to 12 curated editorial tags" },
-        "keywords": { "type": "array", "description": "Up to 20 search index keywords" },
+        "tags": { "type": "array", "description": "Up to 12 editorial tags" },
+        "keywords": { "type": "array", "description": "Up to 20 search keywords" },
         "entities": { "type": "array", "description": "Up to 20 extracted financial entities" },
         "author": { "type": "string", "minLength": 2, "maxLength": 120 },
-        "status": { "type": "string", "enum": ["Draft", "Awaiting Verification", "Verified", "Published", "Archived"] },
+        "status": { "type": "string", "enum": ["Draft", "Awaiting Verification", "Verified", "Published", "Expired", "Retained", "Pending Deletion", "Deletion In Progress", "Deleted", "Archived"] },
         "verificationStatus": { "type": "string", "enum": ["awaiting_verification", "verified", "unverified"] },
-        "sourceName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "sourceName": { "type": "string", "maxLength": 160 },
         "sourceUrl": { "type": "string", "maxLength": 500 },
-        "officialSources": { "type": "array", "description": "Up to 8 official regulatory or exchange citations" },
+        "officialSources": { "type": "array", "description": "Up to 8 official citations" },
         "mediaId": { "type": "string", "maxLength": 128 },
-        "language": { "type": "string", "enum": ["en", "hi"] },
-        "createdByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "youtubeUrl": { "type": "string", "maxLength": 300 },
+        "youtubeVideoId": { "type": "string", "maxLength": 32 },
+        "youtubeTitle": { "type": "string", "maxLength": 200 },
+        "language": { "type": "string", "enum": ["en", "hi", "bilingual"] },
+        "durationPreset": { "type": "string", "enum": ["7d", "15d", "30d", "60d", "custom"] },
+        "durationHours": { "type": "number" },
         "publishedAt": { "type": "string", "maxLength": 64 },
+        "publishedAtMs": { "type": "number" },
+        "expiresAtMs": { "type": "number" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "retainedPrivate": { "type": "boolean" },
+        "featuredPlacement": { "type": "string", "enum": ["none", "main", "secondary"] },
+        "featuredOrder": { "type": "number" },
+        "isPaid": { "type": "boolean" },
+        "paidCampaignId": { "type": "string", "maxLength": 128 },
+        "paidDisclosureLabel": { "type": "string", "maxLength": 64 },
+        "deletionStatus": { "type": "string", "enum": ["none", "pending_approval", "approved", "in_progress", "partial_failure", "deleted"] },
+        "deletionApprovedByUid": { "type": "string", "maxLength": 128 },
+        "deletionApprovedByEmail": { "type": "string", "maxLength": 200 },
+        "deletionApprovedAtMs": { "type": "number" },
+        "deletionError": { "type": "string", "maxLength": 500 },
+        "deletionAttempts": { "type": "number" },
+        "createdByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
         "updatedAt": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [
-        "title",
         "slug",
-        "summary",
-        "body",
         "category",
         "author",
         "status",
         "verificationStatus",
-        "sourceName",
         "language",
         "createdByUid",
         "updatedAt",
         "createdAt"
       ]
     },
+    "MediaAsset": {
+      "title": "MediaAsset",
+      "description": "Metadata for uploaded compressed photographs and YouTube video links",
+      "type": "object",
+      "properties": {
+        "fileName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "storagePath": { "type": "string", "maxLength": 300 },
+        "mediaType": { "type": "string", "enum": ["video/mp4", "video/youtube", "image/png", "image/jpeg", "image/webp"] },
+        "duration": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "sizeBytes": { "type": "number" },
+        "credit": { "type": "string", "maxLength": 200 },
+        "usageRightsConfirmed": { "type": "boolean" },
+        "isPublic": { "type": "boolean" },
+        "expiresAtMs": { "type": "number" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "poster": { "type": "string", "maxLength": 300 },
+        "captions": { "type": "string", "maxLength": 4000 },
+        "transcript": { "type": "string", "maxLength": 10000 },
+        "associatedArticleId": { "type": "string", "maxLength": 128 },
+        "associatedArticleIds": { "type": "array", "description": "Up to 50 linked article IDs" },
+        "youtubeVideoId": { "type": "string", "maxLength": 32 },
+        "youtubeUrl": { "type": "string", "maxLength": 300 },
+        "uploadedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fileName", "mediaType", "uploadedByUid", "createdAt"]
+    },
+    "MediaPayload": {
+      "title": "MediaPayload",
+      "description": "Compressed photograph data URI stored separately from article documents under Firestore <1MB limits",
+      "type": "object",
+      "properties": {
+        "mediaId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "mimeType": { "type": "string", "enum": ["image/jpeg", "image/webp", "image/png"] },
+        "sizeBytes": { "type": "number" },
+        "dataUrl": { "type": "string", "maxLength": 620000 },
+        "isPublic": { "type": "boolean" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "uploadedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["mediaId", "mimeType", "sizeBytes", "dataUrl", "isPublic", "uploadedByUid", "createdAt", "updatedAt"]
+    },
+    "PaidCampaign": {
+      "title": "PaidCampaign",
+      "description": "Private internal commercial & paid publication record (never publicly readable)",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "articleId": { "type": "string", "maxLength": 128 },
+        "articleTitle": { "type": "string", "maxLength": 260 },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "endDate": { "type": "string", "maxLength": 32 },
+        "durationHours": { "type": "number" },
+        "placementPreference": { "type": "string", "maxLength": 120 },
+        "internalStatus": { "type": "string", "enum": ["Planned", "Active", "Paused", "Completed", "Cancelled"] },
+        "disclosureEnabled": { "type": "boolean" },
+        "disclosureLabel": { "type": "string", "maxLength": 64 },
+        "commercialNotes": { "type": "string", "maxLength": 4000 },
+        "createdByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientName", "internalStatus", "disclosureEnabled", "createdByUid", "createdAt", "updatedAt"]
+    },
     "IpoRecord": {
       "title": "IpoRecord",
-      "description": "Primary market IPO dossier with explicit verification gating",
+      "description": "Primary market IPO dossier with official date verification and IST status tracking",
       "type": "object",
       "properties": {
         "companyName": { "type": "string", "minLength": 2, "maxLength": 160 },
@@ -66,32 +189,48 @@
         "status": { "type": "string", "enum": ["Awaiting Verification", "Upcoming", "Open", "Closed", "Listed"] },
         "issueSize": { "type": "string", "maxLength": 100 },
         "priceBand": { "type": "string", "maxLength": 100 },
+        "lotSize": { "type": "string", "maxLength": 100 },
+        "filingDate": { "type": "string", "maxLength": 64 },
         "openingDate": { "type": "string", "maxLength": 64 },
         "closingDate": { "type": "string", "maxLength": 64 },
         "allotmentDate": { "type": "string", "maxLength": 64 },
         "listingDate": { "type": "string", "maxLength": 64 },
         "sellingShareholder": { "type": "string", "maxLength": 160 },
         "offerType": { "type": "string", "maxLength": 120 },
+        "summary": { "type": "string", "maxLength": 2000 },
         "officialDocuments": { "type": "array", "description": "Up to 6 verified DRHP/RHP/exchange links" },
-        "sourceName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "sourceName": { "type": "string", "maxLength": 160 },
         "sourceUrl": { "type": "string", "maxLength": 500 },
         "verificationStatus": { "type": "string", "enum": ["awaiting_verification", "verified"] },
         "lastVerifiedAt": { "type": "string", "maxLength": 64 },
-        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "companyName",
-        "slug",
-        "segment",
-        "status",
-        "sourceName",
-        "verificationStatus",
-        "updatedByUid",
-        "createdAt",
-        "updatedAt"
-      ]
+      "required": ["companyName", "slug", "segment", "status", "verificationStatus", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "IpoSourceReview": {
+      "title": "IpoSourceReview",
+      "description": "Candidate diff detected from official SEBI/NSE/BSE checks awaiting Owner or Publisher approval",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "targetIpoId": { "type": "string", "maxLength": 128 },
+        "segment": { "type": "string", "enum": ["Mainboard", "SME"] },
+        "reviewStatus": { "type": "string", "enum": ["Needs Review", "Approved", "Rejected"] },
+        "sourceName": { "type": "string", "minLength": 2, "maxLength": 160 },
+        "sourceUrl": { "type": "string", "maxLength": 500 },
+        "checkedAt": { "type": "string", "maxLength": 64 },
+        "diffs": { "type": "array", "description": "Up to 15 previous vs newly detected field diffs" },
+        "detectedSummary": { "type": "string", "maxLength": 1200 },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "reviewedByEmail": { "type": "string", "maxLength": 200 },
+        "reviewedAt": { "type": "string", "maxLength": 64 },
+        "createdByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["companyName", "segment", "reviewStatus", "sourceName", "checkedAt", "createdByUid", "createdAt", "updatedAt"]
     },
     "MarketInstrument": {
       "title": "MarketInstrument",
@@ -108,72 +247,27 @@
         "currency": { "type": "string", "maxLength": 16 },
         "source": { "type": "string", "minLength": 2, "maxLength": 120 },
         "freshnessStatus": { "type": "string", "enum": ["live", "delayed", "stale", "unavailable"] },
-        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "name",
-        "symbol",
-        "exchange",
-        "instrumentType",
-        "currency",
-        "source",
-        "freshnessStatus",
-        "updatedByUid",
-        "updatedAt"
-      ]
-    },
-    "MediaAsset": {
-      "title": "MediaAsset",
-      "description": "Uploaded editorial video or visual media metadata",
-      "type": "object",
-      "properties": {
-        "fileName": { "type": "string", "minLength": 3, "maxLength": 200 },
-        "storagePath": { "type": "string", "minLength": 3, "maxLength": 300 },
-        "mediaType": { "type": "string", "enum": ["video/mp4", "image/png", "image/jpeg", "image/webp"] },
-        "duration": { "type": "number" },
-        "width": { "type": "number" },
-        "height": { "type": "number" },
-        "poster": { "type": "string", "maxLength": 300 },
-        "captions": { "type": "string", "maxLength": 4000 },
-        "transcript": { "type": "string", "maxLength": 10000 },
-        "associatedArticleId": { "type": "string", "maxLength": 128 },
-        "uploadedByUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": [
-        "fileName",
-        "storagePath",
-        "mediaType",
-        "uploadedByUid",
-        "createdAt"
-      ]
+      "required": ["name", "symbol", "exchange", "instrumentType", "currency", "source", "freshnessStatus", "updatedByUid", "updatedAt"]
     },
     "AuditLog": {
       "title": "AuditLog",
-      "description": "Immutable editorial audit trail recording draft, verification, and publishing actions",
+      "description": "Immutable editorial, deletion, backup, and permission audit trail",
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["create_draft", "ai_brief", "mark_awaiting_verification", "verify", "publish", "archive", "update"] },
-        "entityType": { "type": "string", "enum": ["article", "ipo", "media", "marketInstrument"] },
-        "entityId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
-        "actorUid": { "type": "string", "minLength": 4, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "action": { "type": "string", "enum": ["create_draft", "ai_brief", "mark_awaiting_verification", "verify", "publish", "archive", "update", "extend_duration", "retain_private", "restore_article", "approve_delete", "start_delete", "complete_delete", "partial_delete_failure", "retry_delete", "ipo_source_check", "ipo_review_approve", "ipo_review_reject", "export_backup", "restore_backup", "permission_update", "paid_update", "media_upload", "media_delete"] },
+        "entityType": { "type": "string", "enum": ["article", "ipo", "ipoReview", "media", "paidCampaign", "marketInstrument", "system", "backup"] },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorUid": { "type": "string", "minLength": 4, "maxLength": 128 },
         "actorEmail": { "type": "string", "format": "email", "minLength": 5, "maxLength": 200 },
         "previousStatus": { "type": "string", "maxLength": 48 },
         "nextStatus": { "type": "string", "minLength": 2, "maxLength": 48 },
-        "summary": { "type": "string", "minLength": 3, "maxLength": 300 },
+        "summary": { "type": "string", "minLength": 3, "maxLength": 400 },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "action",
-        "entityType",
-        "entityId",
-        "actorUid",
-        "actorEmail",
-        "nextStatus",
-        "summary",
-        "createdAt"
-      ]
+      "required": ["action", "entityType", "entityId", "actorUid", "actorEmail", "nextStatus", "summary", "createdAt"]
     },
     "ContactSubmission": {
       "title": "ContactSubmission",
@@ -190,33 +284,17 @@
     }
   },
   "firestore": {
-    "/admins/{userId}": {
-      "schema": { "$ref": "#/entities/AdminUser" },
-      "description": "Authorized editors and administrators for the SakarBazaar editorial desk"
-    },
-    "/articles/{articleId}": {
-      "schema": { "$ref": "#/entities/Article" },
-      "description": "Newsroom articles; only Published articles are publicly readable"
-    },
-    "/ipos/{ipoId}": {
-      "schema": { "$ref": "#/entities/IpoRecord" },
-      "description": "IPO records; only officially verified records are publicly readable without editor access"
-    },
-    "/marketInstruments/{instrumentId}": {
-      "schema": { "$ref": "#/entities/MarketInstrument" },
-      "description": "Market instrument catalog entries and synced market snapshots"
-    },
-    "/media/{mediaId}": {
-      "schema": { "$ref": "#/entities/MediaAsset" },
-      "description": "Uploaded editorial video and image asset metadata"
-    },
-    "/auditLogs/{logId}": {
-      "schema": { "$ref": "#/entities/AuditLog" },
-      "description": "Append-only editorial action audit log restricted to authorized admins/editors"
-    },
-    "/contactSubmissions/{submissionId}": {
-      "schema": { "$ref": "#/entities/ContactSubmission" },
-      "description": "Reader contact submissions readable only by authorized administrators"
-    }
+    "/admins/{userId}": { "schema": { "$ref": "#/entities/AdminUser" }, "description": "Authorized Owner and Publisher UID profiles" },
+    "/authorizedEmails/{emailKey}": { "schema": { "$ref": "#/entities/AuthorizedEmail" }, "description": "Owner-managed email allowlist for Publisher onboarding" },
+    "/systemSettings/{settingId}": { "schema": { "$ref": "#/entities/SystemSetting" }, "description": "Owner-managed security and editorial system settings" },
+    "/articles/{articleId}": { "schema": { "$ref": "#/entities/Article" }, "description": "Shared EN/HI editorial articles with elapsed-hour expiry" },
+    "/media/{mediaId}": { "schema": { "$ref": "#/entities/MediaAsset" }, "description": "Photograph & YouTube video metadata with private-on-expiry enforcement" },
+    "/mediaPayloads/{mediaId}": { "schema": { "$ref": "#/entities/MediaPayload" }, "description": "Compressed photograph data URI payloads (<1MB Firestore limit) blocked publicly on expiry" },
+    "/paidCampaigns/{campaignId}": { "schema": { "$ref": "#/entities/PaidCampaign" }, "description": "Private internal commercial & paid publication tracking" },
+    "/ipos/{ipoId}": { "schema": { "$ref": "#/entities/IpoRecord" }, "description": "Verified and candidate IPO dossiers" },
+    "/ipoSourceReviews/{reviewId}": { "schema": { "$ref": "#/entities/IpoSourceReview" }, "description": "Official SEBI/NSE/BSE diff candidates awaiting human approval" },
+    "/marketInstruments/{instrumentId}": { "schema": { "$ref": "#/entities/MarketInstrument" }, "description": "Market instrument catalog entries" },
+    "/auditLogs/{logId}": { "schema": { "$ref": "#/entities/AuditLog" }, "description": "Append-only immutable audit log" },
+    "/contactSubmissions/{submissionId}": { "schema": { "$ref": "#/entities/ContactSubmission" }, "description": "Reader contact submissions" }
   }
 }
