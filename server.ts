@@ -3,13 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import express, { type Request, type Response } from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
 
 import { ALL_TRACKED_INSTRUMENTS } from './server/market-data/instruments.ts';
 import { MarketDataCacheService } from './server/market-data/cache.ts';
 import { createProviderAdapterFromEnv } from './server/market-data/provider.ts';
 import { checkOfficialIpoSources } from './server/ipo-sources/collector.ts';
-import { resolveGeminiBriefStatus } from './server/editorial/aiConfig.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -135,36 +133,17 @@ async function isAuthorizedNewsroomEditor(
   }
 }
 
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function clampToMaxWords(text: string, maxWords: number): string {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return words.join(' ');
-  return `${words.slice(0, maxWords - 1).join(' ')}…`;
-}
-
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '512kb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     const marketMeta = marketDataService.getSnapshotMetadata();
-    const aiBriefStatus = resolveGeminiBriefStatus(process.env);
     res.json({
       ok: true,
       service: 'sakarbazaar',
       serverTimeMs: Date.now(),
       marketData: marketMeta,
-      aiBriefEnabled: aiBriefStatus.enabled,
-      aiBrief: {
-        enabled: aiBriefStatus.enabled,
-        killSwitchActive: aiBriefStatus.killSwitchActive,
-        model: aiBriefStatus.model,
-        endpoint: aiBriefStatus.endpoint,
-        billingScopeNote: aiBriefStatus.billingScopeNote,
-      },
     });
   });
 
@@ -230,174 +209,6 @@ async function startServer() {
       res.status(502).json({
         error: err instanceof Error ? err.message : 'Unable to check official IPO portals.',
       });
-    }
-  });
-
-  app.post('/api/editorial/generate-brief', async (req: Request, res: Response) => {
-    const clientIp = req.ip || 'local';
-    if (isRateLimited(clientIp)) {
-      res.status(429).json({ error: 'Too many requests.' });
-      return;
-    }
-
-    const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (!token) {
-      res.status(401).json({ error: 'Authentication required for newsroom AI assistance.' });
-      return;
-    }
-
-    const verifiedUser = await verifyFirebaseIdToken(token);
-    if (!verifiedUser) {
-      res.status(401).json({ error: 'Invalid or expired Firebase authentication token.' });
-      return;
-    }
-
-    const allowed = await isAuthorizedNewsroomEditor(
-      verifiedUser.uid,
-      verifiedUser.email,
-      verifiedUser.emailVerified,
-      token,
-    );
-    if (!allowed) {
-      res.status(403).json({
-        error: 'Only verified authorized SakarBazaar newsroom editors may invoke AI brief generation.',
-      });
-      return;
-    }
-
-    const aiBriefStatus = resolveGeminiBriefStatus(process.env);
-    if (aiBriefStatus.killSwitchActive) {
-      res.status(503).json({
-        error:
-          'AI brief generation is disabled by server kill-switch (ENABLE_GEMINI_AI_BRIEF is not set to "true"). Manual drafting and bilingual publishing work at Rs 0 external AI cost.',
-        aiBriefEnabled: false,
-      });
-      return;
-    }
-
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
-    if (!apiKey) {
-      res.status(503).json({
-        error: 'GEMINI_API_KEY is not configured in server secrets. Configure it in server environment variables to generate AI briefs.',
-        aiBriefEnabled: false,
-      });
-      return;
-    }
-
-    const { sourceMaterial, category, sourceName, sourceUrl } = (req.body || {}) as {
-      sourceMaterial?: string;
-      category?: string;
-      sourceName?: string;
-      sourceUrl?: string;
-    };
-
-    if (!sourceMaterial || typeof sourceMaterial !== 'string' || sourceMaterial.trim().length < 30) {
-      res.status(400).json({
-        error: 'Please provide at least 30 characters of editorial source material.',
-      });
-      return;
-    }
-
-    try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-
-      const prompt = [
-        'You are the SakarBazaar Indian financial newsroom verification assistant.',
-        'Generate a neutral, strictly factual newsroom brief from ONLY the supplied source material.',
-        'Rules:',
-        '1. Write summaryBrief strictly under 95 words in factual past tense.',
-        '2. NEVER invent figures, dates, quotes, subscriptions, GMP quotes, official URLs, or investment recommendations.',
-        '3. If numbers or claims come from unverified material, state clearly what awaits official confirmation.',
-        '4. Extract concrete entities, keywords for search indexing, and an editor verification checklist.',
-        `Category: ${category || 'General'}`,
-        `Supplied source attribution: ${sourceName || 'Unspecified'}${sourceUrl ? ` (${sourceUrl})` : ''}`,
-        '--- SOURCE MATERIAL START ---',
-        sourceMaterial.trim().slice(0, 14000),
-        '--- SOURCE MATERIAL END ---',
-      ].join('\n');
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              headline: { type: Type.STRING },
-              summaryBrief: { type: Type.STRING },
-              entities: {
-                type: Type.OBJECT,
-                properties: {
-                  companies: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  instrumentsAndSymbols: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  financialValues: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  dates: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  regulatorsAndExchanges: { type: Type.ARRAY, items: { type: Type.STRING } },
-                },
-                required: [
-                  'companies',
-                  'instrumentsAndSymbols',
-                  'financialValues',
-                  'dates',
-                  'regulatorsAndExchanges',
-                ],
-              },
-              keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-              verificationChecklist: { type: Type.ARRAY, items: { type: Type.STRING } },
-            },
-            required: [
-              'headline',
-              'summaryBrief',
-              'entities',
-              'keywords',
-              'verificationChecklist',
-            ],
-          },
-        },
-      });
-
-      const parsed = JSON.parse(response.text || '{}') as {
-        headline?: string;
-        summaryBrief?: string;
-        entities?: {
-          companies?: string[];
-          instrumentsAndSymbols?: string[];
-          financialValues?: string[];
-          dates?: string[];
-          regulatorsAndExchanges?: string[];
-        };
-        keywords?: string[];
-        verificationChecklist?: string[];
-      };
-
-      const brief = clampToMaxWords(String(parsed.summaryBrief || ''), 99);
-      res.json({
-        headline: String(parsed.headline || '').trim(),
-        summaryBrief: brief,
-        wordCount: countWords(brief),
-        entities: {
-          companies: parsed.entities?.companies ?? [],
-          instrumentsAndSymbols: parsed.entities?.instrumentsAndSymbols ?? [],
-          financialValues: parsed.entities?.financialValues ?? [],
-          dates: parsed.entities?.dates ?? [],
-          regulatorsAndExchanges: parsed.entities?.regulatorsAndExchanges ?? [],
-        },
-        keywords: (parsed.keywords ?? []).slice(0, 18),
-        verificationChecklist: (parsed.verificationChecklist ?? []).slice(0, 8),
-        workflowNotice: 'AI brief saved only into draft workspace. Human verification is required before publishing.',
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to generate AI editorial brief.';
-      res.status(502).json({ error: msg });
     }
   });
 

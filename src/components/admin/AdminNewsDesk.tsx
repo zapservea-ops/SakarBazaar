@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { MEDIA_ASSETS } from '../../data/editorialData';
 import {
-  auth,
   saveCompressedPhotoAsset,
   saveEditorialArticle,
   saveYouTubeMediaAsset,
   syncMediaVisibilityAcrossArticles,
 } from '../../lib/firebase';
 import type {
-  AiGeneratedBriefPayload,
   DurationPreset,
   EditorialWorkflowStatus,
   FeaturedPlacement,
@@ -116,18 +114,6 @@ export function AdminNewsDesk({
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Optional cost-gated AI Brief Helper (default-off kill-switch on server)
-  const [aiHelperOpen, setAiHelperOpen] = useState(false);
-  const [aiSourceMaterial, setAiSourceMaterial] = useState('');
-  const [aiGenerating, setAiGenerating] = useState(false);
-  const [aiLastResult, setAiLastResult] = useState<AiGeneratedBriefPayload | null>(null);
-  const [aiServerStatus, setAiServerStatus] = useState<{
-    enabled: boolean;
-    killSwitchActive: boolean;
-    model: string;
-    billingScopeNote: string;
-  } | null>(null);
-
   // Synchronous submit + idempotency + optimistic version guards
   const savingRef = useRef(false);
   const pendingArticleIdRef = useRef<string | null>(null);
@@ -154,27 +140,6 @@ export function AdminNewsDesk({
       setDurationPreset(data.systemSettings.defaultDurationPreset);
     }
   }, [editingArticle, durationTouched, data.systemSettings.defaultDurationPreset]);
-
-  useEffect(() => {
-    let active = true;
-    fetch('/api/health')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload) => {
-        if (!active || !payload?.aiBrief) return;
-        setAiServerStatus({
-          enabled: Boolean(payload.aiBrief.enabled),
-          killSwitchActive: Boolean(payload.aiBrief.killSwitchActive),
-          model: String(payload.aiBrief.model || 'gemini-4-hydrogen'),
-          billingScopeNote: String(payload.aiBrief.billingScopeNote || ''),
-        });
-      })
-      .catch(() => {
-        // Ignore transient health fetch error
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!editingArticle) return;
@@ -288,76 +253,6 @@ export function AdminNewsDesk({
       setLocalError(err instanceof Error ? err.message : 'Unable to compress photograph.');
     } finally {
       setCompressing(false);
-    }
-  }
-
-  async function handleGenerateAiBrief() {
-    if (aiGenerating) return;
-    if (!aiServerStatus?.enabled) {
-      setLocalError(
-        'AI brief generation is currently disabled by server kill-switch (ENABLE_GEMINI_AI_BRIEF=false). Manual drafting works at Rs 0 external API cost.',
-      );
-      return;
-    }
-    if (aiSourceMaterial.trim().length < 30) {
-      setLocalError('Enter at least 30 characters of official source material to generate an English brief.');
-      return;
-    }
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) {
-      setLocalError('Authentication token unavailable. Refresh session and retry.');
-      return;
-    }
-    setLocalError(null);
-    setAiGenerating(true);
-    try {
-      const res = await fetch('/api/editorial/generate-brief', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          sourceMaterial: aiSourceMaterial,
-          category,
-          sourceName,
-          sourceUrl,
-        }),
-      });
-      const json = (await res.json()) as Partial<AiGeneratedBriefPayload> & { error?: string };
-      if (!res.ok) {
-        throw new Error(json.error || `AI brief endpoint returned HTTP ${res.status}`);
-      }
-      const generated: AiGeneratedBriefPayload = {
-        headline: String(json.headline || ''),
-        summaryBrief: String(json.summaryBrief || ''),
-        wordCount: Number(json.wordCount || 0),
-        entities: json.entities || {
-          companies: [],
-          instrumentsAndSymbols: [],
-          financialValues: [],
-          dates: [],
-          regulatorsAndExchanges: [],
-        },
-        keywords: json.keywords || [],
-        verificationChecklist: json.verificationChecklist || [],
-      };
-      setAiLastResult(generated);
-      if (generated.headline) setEnHeadline(generated.headline);
-      if (generated.summaryBrief) {
-        setEnSummary(generated.summaryBrief);
-        if (!enBody.trim()) {
-          setEnBody(generated.summaryBrief);
-        }
-      }
-      onNotify({
-        tone: 'ok',
-        text: 'AI English draft brief populated. Complete Hindi translation & verification before publishing.',
-      });
-    } catch (err) {
-      setLocalError(extractReadableErrorMessage(err, 'Unable to generate AI draft brief.'));
-    } finally {
-      setAiGenerating(false);
     }
   }
 
@@ -736,69 +631,6 @@ export function AdminNewsDesk({
               placeholder="Optional https://..."
             />
           </label>
-        </div>
-
-        {/* Optional Cost-Gated AI Brief Helper */}
-        <div className="sb-admin-subpanel" style={{ marginBottom: '14px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <strong>Optional EN Draft Brief Helper</strong>
-              <span className={`pill ${aiServerStatus?.enabled ? 'sb-pill-teal' : 'sb-pill-muted'}`}>
-                {aiServerStatus?.enabled
-                  ? `Enabled (${aiServerStatus.model})`
-                  : 'Kill-Switch Active (Rs 0 AI API Spend)'}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => setAiHelperOpen((prev) => !prev)}
-            >
-              {aiHelperOpen ? 'Hide Helper' : 'Open Helper'}
-            </button>
-          </div>
-          {aiHelperOpen && (
-            <div style={{ marginTop: '10px' }}>
-              <p className="meta" style={{ marginTop: 0 }}>
-                {aiServerStatus && !aiServerStatus.enabled
-                  ? 'External Gemini brief generation is disabled (ENABLE_GEMINI_AI_BRIEF is not "true" or API key absent). External Gemini billing is separate from the Firebase Spark free tier. Compose manually below.'
-                  : 'Generates an English summary aid (<99 words) into the draft form only. Both English and Hindi versions remain mandatory before publishing.'}
-              </p>
-              <label className="sb-form-field">
-                <span>Source Material / Press Release Excerpt</span>
-                <textarea
-                  rows={3}
-                  value={aiSourceMaterial}
-                  onChange={(e) => setAiSourceMaterial(e.target.value)}
-                  placeholder="Paste verified exchange filing or press note text (30+ chars)..."
-                  disabled={!aiServerStatus?.enabled}
-                />
-              </label>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn ghost sb-admin-touch-btn"
-                  disabled={!aiServerStatus?.enabled || aiGenerating}
-                  onClick={() => void handleGenerateAiBrief()}
-                >
-                  {aiGenerating ? 'Generating Brief…' : 'Draft EN Headline & Summary'}
-                </button>
-                {aiLastResult && (
-                  <span className="meta">
-                    Generated {aiLastResult.wordCount} words ·{' '}
-                    {aiLastResult.verificationChecklist.length} checklist items
-                  </span>
-                )}
-              </div>
-              {aiLastResult && aiLastResult.verificationChecklist.length > 0 && (
-                <ul className="meta" style={{ margin: '8px 0 0', paddingLeft: '18px' }}>
-                  {aiLastResult.verificationChecklist.map((item, idx) => (
-                    <li key={idx}>{item}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Language view switcher for smaller screens */}

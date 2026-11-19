@@ -47,7 +47,6 @@ import {
   prepareRestoredPaidCampaignPayload,
   validateBackupBundle,
 } from './backupRestore.ts';
-import { resolveGeminiBriefStatus } from '../../server/editorial/aiConfig.ts';
 import {
   assertReviewPendingResolution,
   calculateIpoStatusFromDates,
@@ -682,26 +681,7 @@ test('Optimistic concurrency conflict guards and atomic IPO review resolution gu
   );
 });
 
-test('Gemini AI brief kill-switch defaults off cleanly and categorized backup scope/report are deterministic', () => {
-  // Default / disabled states never enable Gemini calls
-  const defaultOff = resolveGeminiBriefStatus({});
-  assert.equal(defaultOff.enabled, false);
-  assert.equal(defaultOff.killSwitchActive, true);
-  assert.equal(defaultOff.hasApiKey, false);
-
-  const explicitFalse = resolveGeminiBriefStatus({ ENABLE_GEMINI_AI_BRIEF: 'false', GEMINI_API_KEY: 'test-key' });
-  assert.equal(explicitFalse.enabled, false);
-  assert.equal(explicitFalse.killSwitchActive, true);
-
-  const trueNoKey = resolveGeminiBriefStatus({ ENABLE_GEMINI_AI_BRIEF: 'true', GEMINI_API_KEY: '' });
-  assert.equal(trueNoKey.enabled, false);
-  assert.equal(trueNoKey.killSwitchActive, false);
-  assert.equal(trueNoKey.hasApiKey, false);
-
-  const fullyEnabled = resolveGeminiBriefStatus({ ENABLE_GEMINI_AI_BRIEF: 'true', GEMINI_API_KEY: 'test-key' });
-  assert.equal(fullyEnabled.enabled, true);
-  assert.equal(fullyEnabled.killSwitchActive, false);
-
+test('Categorized backup scope, non-atomic warning, and restore report are deterministic', () => {
   // Backup collection scope categorizes content vs operational vs security-sensitive
   assert.equal(BACKUP_AUDIT_LOG_EXPORT_LIMIT, 200);
   const byKey = new Map(BACKUP_COLLECTION_SCOPE.map((c) => [c.key, c]));

@@ -372,7 +372,6 @@ export async function checkEditorAuthorization(user: User | null): Promise<Edito
 export async function writeAuditLog(params: {
   action:
     | 'create_draft'
-    | 'ai_brief'
     | 'mark_awaiting_verification'
     | 'verify'
     | 'publish'
@@ -928,7 +927,6 @@ export async function saveEditorialArticle(params: {
   expectedUpdatedAtMs?: number | null;
   action:
     | 'create_draft'
-    | 'ai_brief'
     | 'mark_awaiting_verification'
     | 'verify'
     | 'publish'

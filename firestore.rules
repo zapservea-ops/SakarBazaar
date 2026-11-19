@@ -355,7 +355,7 @@ service cloud.firestore {
           'previousStatus', 'nextStatus', 'summary', 'createdAt'
         ]) &&
         data.action in [
-          'create_draft', 'ai_brief', 'mark_awaiting_verification', 'verify',
+          'create_draft', 'mark_awaiting_verification', 'verify',
           'publish', 'archive', 'update', 'extend_duration', 'retain_private',
           'restore_article', 'approve_delete', 'start_delete', 'complete_delete',
           'partial_delete_failure', 'retry_delete', 'ipo_source_check',

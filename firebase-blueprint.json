@@ -257,7 +257,7 @@
       "description": "Immutable editorial, deletion, backup, and permission audit trail",
       "type": "object",
       "properties": {
-        "action": { "type": "string", "enum": ["create_draft", "ai_brief", "mark_awaiting_verification", "verify", "publish", "archive", "update", "extend_duration", "retain_private", "restore_article", "approve_delete", "start_delete", "complete_delete", "partial_delete_failure", "retry_delete", "ipo_source_check", "ipo_review_approve", "ipo_review_reject", "export_backup", "restore_backup", "permission_update", "paid_update", "media_upload", "media_delete"] },
+        "action": { "type": "string", "enum": ["create_draft", "mark_awaiting_verification", "verify", "publish", "archive", "update", "extend_duration", "retain_private", "restore_article", "approve_delete", "start_delete", "complete_delete", "partial_delete_failure", "retry_delete", "ipo_source_check", "ipo_review_approve", "ipo_review_reject", "export_backup", "restore_backup", "permission_update", "paid_update", "media_upload", "media_delete"] },
         "entityType": { "type": "string", "enum": ["article", "ipo", "ipoReview", "media", "paidCampaign", "marketInstrument", "system", "backup"] },
         "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
         "actorUid": { "type": "string", "minLength": 4, "maxLength": 128 },

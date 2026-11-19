@@ -325,21 +325,6 @@ export interface TranslationStrings {
   ipodesk: string;
 }
 
-export interface AiGeneratedBriefPayload {
-  headline: string;
-  summaryBrief: string;
-  wordCount: number;
-  entities: {
-    companies: string[];
-    instrumentsAndSymbols: string[];
-    financialValues: string[];
-    dates: string[];
-    regulatorsAndExchanges: string[];
-  };
-  keywords: string[];
-  verificationChecklist: string[];
-}
-
 export interface AdminUserRecord {
   uid: string;
   email: string;

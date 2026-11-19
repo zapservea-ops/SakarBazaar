@@ -14,6 +14,6 @@ https://ai.studio/apps/efe3d2d3-00e3-4fb7-b2d9-c39abe14c8ac
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. Configure optional market-data environment variables in `.env` from `.env.example` (if using a live market feed)
 3. Run the app:
    `npm run dev`
