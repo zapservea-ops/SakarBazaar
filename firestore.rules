@@ -126,54 +126,54 @@ service cloud.firestore {
           'deletionApprovedAtMs', 'deletionError', 'deletionAttempts',
           'createdByUid', 'updatedByUid', 'updatedAt', 'createdAt'
         ]) &&
-        (!('title' in data) || (data.title is string && data.title.size() <= 260)) &&
+        (!('title' in data) || data.title == null || (data.title is string && data.title.size() <= 260)) &&
         data.slug is string && data.slug.size() >= 3 && data.slug.size() <= 160 && data.slug.matches('^[a-z0-9\\-]+$') &&
-        (!('summary' in data) || (data.summary is string && data.summary.size() <= 1200)) &&
-        (!('body' in data) || (data.body is string && data.body.size() <= 25000)) &&
-        (!('enHeadline' in data) || (data.enHeadline is string && data.enHeadline.size() <= 260)) &&
-        (!('enSummary' in data) || (data.enSummary is string && data.enSummary.size() <= 1200)) &&
-        (!('enBody' in data) || (data.enBody is string && data.enBody.size() <= 25000)) &&
-        (!('hiHeadline' in data) || (data.hiHeadline is string && data.hiHeadline.size() <= 260)) &&
-        (!('hiSummary' in data) || (data.hiSummary is string && data.hiSummary.size() <= 1200)) &&
-        (!('hiBody' in data) || (data.hiBody is string && data.hiBody.size() <= 25000)) &&
+        (!('summary' in data) || data.summary == null || (data.summary is string && data.summary.size() <= 1200)) &&
+        (!('body' in data) || data.body == null || (data.body is string && data.body.size() <= 25000)) &&
+        (!('enHeadline' in data) || data.enHeadline == null || (data.enHeadline is string && data.enHeadline.size() <= 260)) &&
+        (!('enSummary' in data) || data.enSummary == null || (data.enSummary is string && data.enSummary.size() <= 1200)) &&
+        (!('enBody' in data) || data.enBody == null || (data.enBody is string && data.enBody.size() <= 25000)) &&
+        (!('hiHeadline' in data) || data.hiHeadline == null || (data.hiHeadline is string && data.hiHeadline.size() <= 260)) &&
+        (!('hiSummary' in data) || data.hiSummary == null || (data.hiSummary is string && data.hiSummary.size() <= 1200)) &&
+        (!('hiBody' in data) || data.hiBody == null || (data.hiBody is string && data.hiBody.size() <= 25000)) &&
         data.category in ['Markets', 'IPO', 'Corporate', 'Economy', 'RBI', 'Banking', 'Technology', 'Personal finance'] &&
-        (!('tags' in data) || isValidStringList(data.tags, 12)) &&
-        (!('keywords' in data) || isValidStringList(data.keywords, 20)) &&
-        (!('entities' in data) || isValidStringList(data.entities, 20)) &&
+        (!('tags' in data) || data.tags == null || isValidStringList(data.tags, 12)) &&
+        (!('keywords' in data) || data.keywords == null || isValidStringList(data.keywords, 20)) &&
+        (!('entities' in data) || data.entities == null || isValidStringList(data.entities, 20)) &&
         data.author is string && data.author.size() >= 2 && data.author.size() <= 120 &&
         data.status in [
           'Draft', 'Awaiting Verification', 'Verified', 'Published',
           'Expired', 'Retained', 'Pending Deletion', 'Deletion In Progress', 'Deleted', 'Archived'
         ] &&
         data.verificationStatus in ['awaiting_verification', 'verified', 'unverified'] &&
-        (!('sourceName' in data) || (data.sourceName is string && data.sourceName.size() <= 160)) &&
-        (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
-        (!('officialSources' in data) || isValidStringList(data.officialSources, 8)) &&
-        (!('mediaId' in data) || (data.mediaId is string && data.mediaId.size() <= 128)) &&
-        (!('youtubeUrl' in data) || (data.youtubeUrl is string && data.youtubeUrl.size() <= 300)) &&
-        (!('youtubeVideoId' in data) || (data.youtubeVideoId is string && data.youtubeVideoId.size() <= 32)) &&
-        (!('youtubeTitle' in data) || (data.youtubeTitle is string && data.youtubeTitle.size() <= 200)) &&
+        (!('sourceName' in data) || data.sourceName == null || (data.sourceName is string && data.sourceName.size() <= 160)) &&
+        (!('sourceUrl' in data) || data.sourceUrl == null || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
+        (!('officialSources' in data) || data.officialSources == null || isValidStringList(data.officialSources, 8)) &&
+        (!('mediaId' in data) || data.mediaId == null || (data.mediaId is string && data.mediaId.size() <= 128)) &&
+        (!('youtubeUrl' in data) || data.youtubeUrl == null || (data.youtubeUrl is string && data.youtubeUrl.size() <= 300)) &&
+        (!('youtubeVideoId' in data) || data.youtubeVideoId == null || (data.youtubeVideoId is string && data.youtubeVideoId.size() <= 32)) &&
+        (!('youtubeTitle' in data) || data.youtubeTitle == null || (data.youtubeTitle is string && data.youtubeTitle.size() <= 200)) &&
         data.language in ['en', 'hi', 'bilingual'] &&
-        (!('durationPreset' in data) || data.durationPreset in ['7d', '15d', '30d', '60d', 'custom']) &&
-        (!('durationHours' in data) || (data.durationHours is number && data.durationHours >= 1 && data.durationHours <= 43800)) &&
-        (!('publishedAt' in data) || (data.publishedAt is string && data.publishedAt.size() <= 64)) &&
+        (!('durationPreset' in data) || data.durationPreset == null || data.durationPreset in ['7d', '15d', '30d', '60d', 'custom']) &&
+        (!('durationHours' in data) || data.durationHours == null || (data.durationHours is number && data.durationHours >= 1 && data.durationHours <= 43800)) &&
+        (!('publishedAt' in data) || data.publishedAt == null || (data.publishedAt is string && data.publishedAt.size() <= 64)) &&
         (!('publishedAtMs' in data) || data.publishedAtMs == null || data.publishedAtMs is number) &&
         (!('expiresAtMs' in data) || data.expiresAtMs == null || data.expiresAtMs is number) &&
         (!('expiresAt' in data) || data.expiresAt == null || data.expiresAt is timestamp) &&
-        (!('retainedPrivate' in data) || data.retainedPrivate is bool) &&
-        (!('featuredPlacement' in data) || data.featuredPlacement in ['none', 'main', 'secondary']) &&
-        (!('featuredOrder' in data) || data.featuredOrder is number) &&
-        (!('isPaid' in data) || data.isPaid is bool) &&
-        (!('paidCampaignId' in data) || (data.paidCampaignId is string && data.paidCampaignId.size() <= 128)) &&
-        (!('paidDisclosureLabel' in data) || (data.paidDisclosureLabel is string && data.paidDisclosureLabel.size() <= 64)) &&
-        (!('deletionStatus' in data) || data.deletionStatus in ['none', 'pending_approval', 'approved', 'in_progress', 'partial_failure', 'deleted']) &&
-        (!('deletionApprovedByUid' in data) || (data.deletionApprovedByUid is string && data.deletionApprovedByUid.size() <= 128)) &&
-        (!('deletionApprovedByEmail' in data) || (data.deletionApprovedByEmail is string && data.deletionApprovedByEmail.size() <= 200)) &&
+        (!('retainedPrivate' in data) || data.retainedPrivate == null || data.retainedPrivate is bool) &&
+        (!('featuredPlacement' in data) || data.featuredPlacement == null || data.featuredPlacement in ['none', 'main', 'secondary']) &&
+        (!('featuredOrder' in data) || data.featuredOrder == null || data.featuredOrder is number) &&
+        (!('isPaid' in data) || data.isPaid == null || data.isPaid is bool) &&
+        (!('paidCampaignId' in data) || data.paidCampaignId == null || (data.paidCampaignId is string && data.paidCampaignId.size() <= 128)) &&
+        (!('paidDisclosureLabel' in data) || data.paidDisclosureLabel == null || (data.paidDisclosureLabel is string && data.paidDisclosureLabel.size() <= 64)) &&
+        (!('deletionStatus' in data) || data.deletionStatus == null || data.deletionStatus in ['none', 'pending_approval', 'approved', 'in_progress', 'partial_failure', 'deleted']) &&
+        (!('deletionApprovedByUid' in data) || data.deletionApprovedByUid == null || (data.deletionApprovedByUid is string && data.deletionApprovedByUid.size() <= 128)) &&
+        (!('deletionApprovedByEmail' in data) || data.deletionApprovedByEmail == null || (data.deletionApprovedByEmail is string && data.deletionApprovedByEmail.size() <= 200)) &&
         (!('deletionApprovedAtMs' in data) || data.deletionApprovedAtMs == null || data.deletionApprovedAtMs is number) &&
-        (!('deletionError' in data) || (data.deletionError is string && data.deletionError.size() <= 500)) &&
-        (!('deletionAttempts' in data) || data.deletionAttempts is number) &&
+        (!('deletionError' in data) || data.deletionError == null || (data.deletionError is string && data.deletionError.size() <= 500)) &&
+        (!('deletionAttempts' in data) || data.deletionAttempts == null || data.deletionAttempts is number) &&
         isValidId(data.createdByUid) &&
-        (!('updatedByUid' in data) || isValidId(data.updatedByUid)) &&
+        (!('updatedByUid' in data) || data.updatedByUid == null || isValidId(data.updatedByUid)) &&
         data.updatedAt is timestamp &&
         data.createdAt is timestamp;
     }
@@ -191,30 +191,30 @@ service cloud.firestore {
           'sourceUrl', 'verificationStatus', 'previousVerificationStatus', 'isArchived',
           'deletionStatus', 'lastVerifiedAt', 'updatedByUid', 'createdAt', 'updatedAt'
         ]) &&
-        (!('migrationKey' in data) || (data.migrationKey is string && data.migrationKey.size() <= 120)) &&
+        (!('migrationKey' in data) || data.migrationKey == null || (data.migrationKey is string && data.migrationKey.size() <= 120)) &&
         data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 160 &&
         data.slug is string && data.slug.size() >= 3 && data.slug.size() <= 160 && data.slug.matches('^[a-z0-9\\-]+$') &&
         data.segment in ['Mainboard', 'SME'] &&
         data.status in [
-          'Awaiting Verification', 'Upcoming', 'Open', 'Closed', 'Listed',
+          'Draft', 'Awaiting Verification', 'Rejected', 'Upcoming', 'Open', 'Closed', 'Listed',
           'Archived', 'Unpublished', 'Pending Deletion', 'Deleted'
         ] &&
-        (!('issueSize' in data) || (data.issueSize is string && data.issueSize.size() <= 100)) &&
-        (!('priceBand' in data) || (data.priceBand is string && data.priceBand.size() <= 100)) &&
-        (!('lotSize' in data) || (data.lotSize is string && data.lotSize.size() <= 100)) &&
-        (!('filingDate' in data) || (data.filingDate is string && data.filingDate.size() <= 64)) &&
-        (!('openingDate' in data) || (data.openingDate is string && data.openingDate.size() <= 64)) &&
-        (!('closingDate' in data) || (data.closingDate is string && data.closingDate.size() <= 64)) &&
-        (!('allotmentDate' in data) || (data.allotmentDate is string && data.allotmentDate.size() <= 64)) &&
-        (!('listingDate' in data) || (data.listingDate is string && data.listingDate.size() <= 64)) &&
-        (!('sellingShareholder' in data) || (data.sellingShareholder is string && data.sellingShareholder.size() <= 160)) &&
-        (!('offerType' in data) || (data.offerType is string && data.offerType.size() <= 120)) &&
-        (!('summary' in data) || (data.summary is string && data.summary.size() <= 2000)) &&
-        (!('officialDocuments' in data) || isValidStringList(data.officialDocuments, 6)) &&
-        (!('sourceName' in data) || (data.sourceName is string && data.sourceName.size() <= 160)) &&
-        (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
-        data.verificationStatus in ['awaiting_verification', 'verified', 'unpublished', 'archived'] &&
-        (!('previousVerificationStatus' in data) || data.previousVerificationStatus in ['awaiting_verification', 'verified']) &&
+        (!('issueSize' in data) || data.issueSize == null || (data.issueSize is string && data.issueSize.size() <= 100)) &&
+        (!('priceBand' in data) || data.priceBand == null || (data.priceBand is string && data.priceBand.size() <= 100)) &&
+        (!('lotSize' in data) || data.lotSize == null || (data.lotSize is string && data.lotSize.size() <= 100)) &&
+        (!('filingDate' in data) || data.filingDate == null || (data.filingDate is string && data.filingDate.size() <= 64)) &&
+        (!('openingDate' in data) || data.openingDate == null || (data.openingDate is string && data.openingDate.size() <= 64)) &&
+        (!('closingDate' in data) || data.closingDate == null || (data.closingDate is string && data.closingDate.size() <= 64)) &&
+        (!('allotmentDate' in data) || data.allotmentDate == null || (data.allotmentDate is string && data.allotmentDate.size() <= 64)) &&
+        (!('listingDate' in data) || data.listingDate == null || (data.listingDate is string && data.listingDate.size() <= 64)) &&
+        (!('sellingShareholder' in data) || data.sellingShareholder == null || (data.sellingShareholder is string && data.sellingShareholder.size() <= 160)) &&
+        (!('offerType' in data) || data.offerType == null || (data.offerType is string && data.offerType.size() <= 120)) &&
+        (!('summary' in data) || data.summary == null || (data.summary is string && data.summary.size() <= 2000)) &&
+        (!('officialDocuments' in data) || data.officialDocuments == null || isValidStringList(data.officialDocuments, 6)) &&
+        (!('sourceName' in data) || data.sourceName == null || (data.sourceName is string && data.sourceName.size() <= 160)) &&
+        (!('sourceUrl' in data) || data.sourceUrl == null || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
+        data.verificationStatus in ['awaiting_verification', 'verified', 'unpublished', 'archived', 'rejected', 'proposed'] &&
+        (!('previousVerificationStatus' in data) || data.previousVerificationStatus == null || data.previousVerificationStatus in ['awaiting_verification', 'verified', 'rejected']) &&
         data.isArchived is bool &&
         data.deletionStatus in ['none', 'pending_approval', 'approved', 'deleted'] &&
         (data.verificationStatus != 'verified' || (
@@ -222,7 +222,7 @@ service cloud.firestore {
           data.status in ['Upcoming', 'Open', 'Closed', 'Listed'] &&
           data.deletionStatus == 'none'
         )) &&
-        (!('lastVerifiedAt' in data) || (data.lastVerifiedAt is string && data.lastVerifiedAt.size() <= 64)) &&
+        (!('lastVerifiedAt' in data) || data.lastVerifiedAt == null || (data.lastVerifiedAt is string && data.lastVerifiedAt.size() <= 64)) &&
         isValidId(data.updatedByUid) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;

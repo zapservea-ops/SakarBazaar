@@ -1,4 +1,4 @@
-import type { StoredArticleDoc, StoredMediaAssetDoc } from '../types/sakarbazaar';
+import type { ArticleRecord, MediaAssetRecord, StoredArticleDoc, StoredMediaAssetDoc } from '../types/sakarbazaar';
 
 export const MAX_FIRESTORE_IMAGE_RAW_BYTES = 400_000;
 export const TARGET_IMAGE_RAW_BYTES = 180_000;
@@ -156,7 +156,8 @@ export async function compressImageFileInBrowser(
     for (let scaleStep = 0; scaleStep < 3; scaleStep++) {
       canvas.width = currentWidth;
       canvas.height = currentHeight;
-      ctx.clearRect(0, 0, currentWidth, currentHeight);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, currentWidth, currentHeight);
       ctx.drawImage(img, 0, 0, currentWidth, currentHeight);
 
       for (const quality of [0.82, 0.7, 0.58, 0.45]) {
@@ -229,6 +230,70 @@ export function canSafelyDeleteMediaAsset(
   return {
     canDelete: remainingArticleIds.length === 0,
     remainingArticleIds,
+  };
+}
+
+/**
+ * Evaluates whether an article's previous media asset can be safely deleted after being replaced or detached.
+ * Shared assets and bundled static catalog assets are never deleted; only unreferenced uploaded assets are removed.
+ */
+export function evaluateReplacedMediaCleanup(params: {
+  previousMediaId?: string | null;
+  nextMediaId?: string | null;
+  allArticles: Array<Pick<StoredArticleDoc, 'id' | 'mediaId' | 'status' | 'deletionStatus'>>;
+  staticArticles?: Array<Pick<ArticleRecord, 'id' | 'mediaId' | 'media'>>;
+  staticMediaAssets?: Array<Pick<MediaAssetRecord, 'id'>>;
+}): {
+  shouldSyncPrevious: boolean;
+  shouldDeletePrevious: boolean;
+  reason: 'unchanged' | 'bundled_static_asset' | 'still_referenced' | 'unreferenced_custom_asset';
+  remainingArticleIds: string[];
+} {
+  const prevId = (params.previousMediaId ?? '').trim();
+  const nextId = (params.nextMediaId ?? '').trim();
+  if (!prevId || prevId === nextId) {
+    return {
+      shouldSyncPrevious: false,
+      shouldDeletePrevious: false,
+      reason: 'unchanged',
+      remainingArticleIds: [],
+    };
+  }
+
+  if (params.staticMediaAssets?.some((m) => m.id === prevId)) {
+    return {
+      shouldSyncPrevious: true,
+      shouldDeletePrevious: false,
+      reason: 'bundled_static_asset',
+      remainingArticleIds: [],
+    };
+  }
+
+  const firestoreRefs = getRemainingArticleReferencesForMedia(prevId, params.allArticles);
+  const migratedIds = new Set(params.allArticles.map((a) => a.id));
+  const staticRefs = (params.staticArticles ?? [])
+    .filter(
+      (s) =>
+        !migratedIds.has(s.id) &&
+        (s.mediaId === prevId || s.media?.id === prevId),
+    )
+    .map((s) => s.id);
+  const remainingArticleIds = Array.from(new Set([...firestoreRefs, ...staticRefs]));
+
+  if (remainingArticleIds.length > 0) {
+    return {
+      shouldSyncPrevious: true,
+      shouldDeletePrevious: false,
+      reason: 'still_referenced',
+      remainingArticleIds,
+    };
+  }
+
+  return {
+    shouldSyncPrevious: true,
+    shouldDeletePrevious: true,
+    reason: 'unreferenced_custom_asset',
+    remainingArticleIds: [],
   };
 }
 

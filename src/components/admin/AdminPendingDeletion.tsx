@@ -27,6 +27,7 @@ export function AdminPendingDeletion({
 }: AdminPendingDeletionProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmExecuteId, setConfirmExecuteId] = useState<string | null>(null);
+  const [localFeedback, setLocalFeedback] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const busyIdsRef = useRef<Set<string>>(new Set());
 
   const queue = data.articles.filter(isArticleInDeletionQueue);
@@ -35,19 +36,18 @@ export function AdminPendingDeletion({
     if (busyIdsRef.current.has(art.id)) return;
     busyIdsRef.current.add(art.id);
     setBusyId(art.id);
+    setLocalFeedback(null);
     try {
-      await approveArticleForPermanentDeletion(art);
-      await onRefresh();
+      await approveArticleForPermanentDeletion(art, data.articles);
+      await onRefresh({ scope: 'none' });
       await onPublicContentChanged();
-      onNotify({
-        tone: 'ok',
-        text: `Approved permanent deletion for "${art.enHeadline || art.title}". You may now execute final removal.`,
-      });
+      const msg = `Approved permanent deletion for "${art.enHeadline || art.title}" (Step 1 of 2 complete). Click "Execute Permanent Deletion" below to finish removal.`;
+      setLocalFeedback({ tone: 'ok', text: msg });
+      onNotify({ tone: 'ok', text: msg });
     } catch (err) {
-      onNotify({
-        tone: 'err',
-        text: extractReadableErrorMessage(err, 'Unable to approve permanent deletion.'),
-      });
+      const errMsg = extractReadableErrorMessage(err, 'Unable to approve permanent deletion.');
+      setLocalFeedback({ tone: 'err', text: errMsg });
+      onNotify({ tone: 'err', text: errMsg });
     } finally {
       busyIdsRef.current.delete(art.id);
       setBusyId(null);
@@ -59,19 +59,18 @@ export function AdminPendingDeletion({
     busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     setConfirmExecuteId(null);
+    setLocalFeedback(null);
     try {
       const res = await executePermanentArticleDeletion(art, data.articles);
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId && res.status === 'deleted' ? 'media' : 'none' });
       await onPublicContentChanged();
-      onNotify({
-        tone: res.status === 'deleted' ? 'ok' : 'err',
-        text: res.message,
-      });
+      const tone = res.status === 'deleted' ? 'ok' : 'err';
+      setLocalFeedback({ tone, text: res.message });
+      onNotify({ tone, text: res.message });
     } catch (err) {
-      onNotify({
-        tone: 'err',
-        text: extractReadableErrorMessage(err, 'Deletion failed.'),
-      });
+      const errMsg = extractReadableErrorMessage(err, 'Deletion failed.');
+      setLocalFeedback({ tone: 'err', text: errMsg });
+      onNotify({ tone: 'err', text: errMsg });
     } finally {
       busyIdsRef.current.delete(art.id);
       setBusyId(null);
@@ -82,19 +81,19 @@ export function AdminPendingDeletion({
     if (busyIdsRef.current.has(art.id)) return;
     busyIdsRef.current.add(art.id);
     setBusyId(art.id);
+    setConfirmExecuteId(null);
+    setLocalFeedback(null);
     try {
-      await cancelArticleDeletionApproval(art);
-      await onRefresh();
+      await cancelArticleDeletionApproval(art, data.articles);
+      await onRefresh({ scope: 'none' });
       await onPublicContentChanged();
-      onNotify({
-        tone: 'ok',
-        text: `Cancelled deletion and kept "${art.enHeadline || art.title}" in private archive.`,
-      });
+      const msg = `Cancelled deletion and kept "${art.enHeadline || art.title}" in private archive.`;
+      setLocalFeedback({ tone: 'ok', text: msg });
+      onNotify({ tone: 'ok', text: msg });
     } catch (err) {
-      onNotify({
-        tone: 'err',
-        text: extractReadableErrorMessage(err, 'Unable to cancel deletion.'),
-      });
+      const errMsg = extractReadableErrorMessage(err, 'Unable to cancel deletion.');
+      setLocalFeedback({ tone: 'err', text: errMsg });
+      onNotify({ tone: 'err', text: errMsg });
     } finally {
       busyIdsRef.current.delete(art.id);
       setBusyId(null);
@@ -107,12 +106,25 @@ export function AdminPendingDeletion({
         <div>
           <h2>Pending Deletion ({queue.length})</h2>
           <p className="sb-sec-sub">
-            Articles awaiting deletion approval (<code>pending_approval</code>) and approved deletions appear here
-            immediately. Execution verifies authoritative Firestore media references right before removing unshared
-            photos/payloads and records an idempotent audit entry.
+            Deletion requires two explicit steps: Step 1 approves the request (<code>pending_approval → approved</code>),
+            and Step 2 executes final permanent removal (<code>approved → in_progress → deleted</code>) after
+            verifying Firestore media references and recording an idempotent audit entry.
           </p>
         </div>
       </div>
+
+      {localFeedback && (
+        <div
+          className={`sb-admin-alert ${localFeedback.tone}`}
+          role={localFeedback.tone === 'err' ? 'alert' : 'status'}
+          style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center' }}
+        >
+          <span>{localFeedback.text}</span>
+          <button type="button" className="btn ghost" onClick={() => setLocalFeedback(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {queue.length > 0 ? (
         <div className="sb-admin-card-list">
@@ -122,6 +134,7 @@ export function AdminPendingDeletion({
               ? canSafelyDeleteMediaAsset(art.mediaId, data.articles, art.id)
               : null;
             const isPendingApproval = cls.stage === 'deletion_pending_approval';
+            const isApproved = cls.stage === 'deletion_approved';
             const isPartialFailure = cls.stage === 'deletion_partial_failure';
             const isInProgress = cls.stage === 'deletion_in_progress';
             const canExecute = canRetryPermanentDeletion(art, adminRole);
@@ -132,7 +145,7 @@ export function AdminPendingDeletion({
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
                     <span
                       className={`pill ${
-                        isPartialFailure || isPendingApproval ? 'sb-pill-amber' : 'sb-pill-muted'
+                        isPartialFailure || isPendingApproval ? 'sb-pill-amber' : isApproved ? 'sb-pill-teal' : 'sb-pill-muted'
                       }`}
                     >
                       {cls.statusLabel}
@@ -145,7 +158,7 @@ export function AdminPendingDeletion({
                   </div>
                   <span className="meta">
                     {isPendingApproval
-                      ? `Requested by: ${art.deletionApprovedByEmail || 'Operator'}`
+                      ? 'Step 1 of 2: Awaiting explicit approval'
                       : `Approved by: ${art.deletionApprovedByEmail || 'Operator'}`}
                   </span>
                 </div>
@@ -162,7 +175,13 @@ export function AdminPendingDeletion({
 
                 {isPendingApproval && (
                   <div className="sb-note-box" style={{ marginBottom: '10px', fontSize: '13px' }}>
-                    <strong>Awaiting Explicit Approval:</strong> Approve this request first before permanent deletion can run.
+                    <strong>Step 1 — Awaiting Explicit Approval:</strong> Click <strong>Approve Permanent Deletion</strong> first before final deletion can run.
+                  </div>
+                )}
+
+                {isApproved && (
+                  <div className="sb-note-box" style={{ marginBottom: '10px', fontSize: '13px' }}>
+                    <strong>Step 2 — Approval Recorded:</strong> Click <strong>Execute Permanent Deletion</strong> below and confirm to permanently remove this article{art.mediaId ? ' and update/clean up its media' : ''}.
                   </div>
                 )}
 
@@ -172,16 +191,17 @@ export function AdminPendingDeletion({
                   </div>
                 )}
 
-                {isPartialFailure && art.deletionError && (
-                  <div className="sb-admin-alert err" style={{ marginBottom: '10px' }}>
-                    Previous attempt failed cleanly ({art.deletionAttempts || 1} attempt(s)): {art.deletionError}
+                {isPartialFailure && (
+                  <div className="sb-admin-alert err" role="alert" style={{ marginBottom: '10px' }}>
+                    Previous execution attempt failed cleanly ({art.deletionAttempts || 1} attempt(s)):{' '}
+                    {art.deletionError || 'Click Retry Permanent Deletion to resume safely.'}
                   </div>
                 )}
 
                 {confirmExecuteId === art.id ? (
                   <div className="sb-admin-subpanel">
                     <p style={{ margin: '0 0 10px', fontWeight: 600 }}>
-                      Permanently delete "{art.enHeadline || art.title}"? This action cannot be undone.
+                      Permanently delete &quot;{art.enHeadline || art.title}&quot;? This action cannot be undone.
                     </p>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button
@@ -191,11 +211,12 @@ export function AdminPendingDeletion({
                         disabled={busyId === art.id}
                         onClick={() => void handleExecute(art)}
                       >
-                        Yes, Permanently Delete
+                        {busyId === art.id ? 'Deleting…' : 'Yes, Permanently Delete'}
                       </button>
                       <button
                         type="button"
                         className="btn ghost sb-admin-touch-btn"
+                        disabled={busyId === art.id}
                         onClick={() => setConfirmExecuteId(null)}
                       >
                         Keep for Now
@@ -221,7 +242,7 @@ export function AdminPendingDeletion({
                         disabled={busyId === art.id}
                         onClick={() => void handleApprove(art)}
                       >
-                        Approve Permanent Deletion
+                        {busyId === art.id ? 'Approving…' : 'Approve Permanent Deletion'}
                       </button>
                     )}
                     {canExecute && (

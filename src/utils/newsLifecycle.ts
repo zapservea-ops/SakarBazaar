@@ -425,6 +425,150 @@ export function validateArticlePublishInput(input: BilingualArticleDraftInput): 
   return { valid: errors.length === 0, errors };
 }
 
+export interface NewsComposerValidationInput extends BilingualArticleDraftInput {
+  author: string;
+  targetMode: 'draft' | 'minor_edit' | 'publish';
+  mediaMode: 'none' | 'existing' | 'photo' | 'youtube';
+  photoDataUrl?: string;
+  mediaCredit?: string;
+  usageRightsConfirmed?: boolean;
+  youtubeInput?: string;
+  hasValidYouTube?: boolean;
+  selectedExistingMediaId?: string;
+}
+
+export interface NewsComposerValidationFields {
+  author: boolean;
+  enHeadline: boolean;
+  enBody: boolean;
+  hiHeadline: boolean;
+  hiBody: boolean;
+  sourceUrl: boolean;
+  customHours: boolean;
+  photoFile: boolean;
+  mediaCredit: boolean;
+  usageRightsConfirmed: boolean;
+  youtubeUrl: boolean;
+  existingMedia: boolean;
+}
+
+export interface NewsComposerValidationResult {
+  valid: boolean;
+  errors: string[];
+  message: string | null;
+  fields: NewsComposerValidationFields;
+}
+
+/**
+ * Validates article text, optional source metadata, and media attachment requirements
+ * together so the News Desk UI can display both an action-bar summary and exact
+ * inline field-level highlights (including photo credit & usage-rights confirmation).
+ */
+export function validateNewsComposerInput(
+  input: NewsComposerValidationInput,
+): NewsComposerValidationResult {
+  const fields: NewsComposerValidationFields = {
+    author: false,
+    enHeadline: false,
+    enBody: false,
+    hiHeadline: false,
+    hiBody: false,
+    sourceUrl: false,
+    customHours: false,
+    photoFile: false,
+    mediaCredit: false,
+    usageRightsConfirmed: false,
+    youtubeUrl: false,
+    existingMedia: false,
+  };
+  const errors: string[] = [];
+
+  const authorLen = input.author.trim().length;
+  if (authorLen < 2 || authorLen > 120) {
+    fields.author = true;
+    errors.push('Author / Byline must be between 2 and 120 characters.');
+  }
+
+  if (input.targetMode === 'publish') {
+    const publishCheck = validateArticlePublishInput(input);
+    if (!publishCheck.valid) {
+      errors.push(...publishCheck.errors);
+      if (input.enHeadline.trim().length < 5 || input.enHeadline.trim().length > ARTICLE_FIELD_LIMITS.headlineMax) {
+        fields.enHeadline = true;
+      }
+      if (input.enBody.trim().length < 20 || input.enBody.trim().length > ARTICLE_FIELD_LIMITS.bodyMax) {
+        fields.enBody = true;
+      }
+      if (input.hiHeadline.trim().length < 5 || input.hiHeadline.trim().length > ARTICLE_FIELD_LIMITS.headlineMax) {
+        fields.hiHeadline = true;
+      }
+      if (input.hiBody.trim().length < 20 || input.hiBody.trim().length > ARTICLE_FIELD_LIMITS.bodyMax) {
+        fields.hiBody = true;
+      }
+    }
+  } else {
+    const draftCheck = validateArticleDraftInput(input);
+    if (!draftCheck.valid) {
+      errors.push(...draftCheck.errors);
+      if (input.enHeadline.trim().length < 3 && input.hiHeadline.trim().length < 3) {
+        fields.enHeadline = true;
+        fields.hiHeadline = true;
+      }
+    }
+  }
+
+  if (!isValidOptionalHttpUrl(input.sourceUrl)) {
+    fields.sourceUrl = true;
+  }
+  if (input.durationPreset === 'custom') {
+    const hours = Number(input.customHours);
+    if (!Number.isFinite(hours) || hours < 1 || hours > 43800) {
+      fields.customHours = true;
+    }
+  }
+
+  if (input.mediaMode === 'photo') {
+    const hasPhoto = Boolean((input.photoDataUrl ?? '').trim());
+    const hasCredit = Boolean((input.mediaCredit ?? '').trim());
+    const hasRights = Boolean(input.usageRightsConfirmed);
+    if (!hasPhoto) {
+      fields.photoFile = true;
+      errors.push(
+        'Select a photograph file to upload, or switch media mode to Reuse Media Library / No Media.',
+      );
+    }
+    if (!hasCredit) {
+      fields.mediaCredit = true;
+      errors.push(
+        'Photographer / Source Credit is required before saving or republishing an uploaded photograph.',
+      );
+    }
+    if (!hasRights) {
+      fields.usageRightsConfirmed = true;
+      errors.push(
+        'Please confirm legal usage rights ("I confirm legal usage rights for this photograph") before saving or republishing.',
+      );
+    }
+  } else if (input.mediaMode === 'youtube') {
+    if (!(input.youtubeInput ?? '').trim() || !input.hasValidYouTube) {
+      fields.youtubeUrl = true;
+      errors.push('Enter a valid YouTube video URL or 11-character YouTube video ID.');
+    }
+  } else if (input.mediaMode === 'existing') {
+    if (!(input.selectedExistingMediaId ?? '').trim()) {
+      fields.existingMedia = true;
+      errors.push('Select an existing asset from the Media Library or switch media mode to No Media.');
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    message: errors.length > 0 ? errors.join(' ') : null,
+    fields,
+  };
+}
+
 /**
  * Applies a minor edit to an article WITHOUT resetting publishedAtMs or expiresAtMs.
  */
@@ -659,14 +803,29 @@ export function canRetryPermanentDeletion(
   return classifyArticleLifecycle(article).canExecuteDeletion;
 }
 
+export function shouldAllowAbandonedDeletionRecovery(
+  updatedAtMs: number | null,
+  nowMs: number = Date.now(),
+  staleThresholdMs: number = 90_000,
+): boolean {
+  if (updatedAtMs === null || !Number.isFinite(updatedAtMs)) return true;
+  return nowMs - updatedAtMs >= staleThresholdMs;
+}
+
 export function extractReadableErrorMessage(err: unknown, fallback: string = 'Operation failed.'): string {
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   if (!raw.trim()) return fallback;
   if (raw.trim().startsWith('{')) {
     try {
-      const parsed = JSON.parse(raw) as { error?: unknown; path?: unknown };
+      const parsed = JSON.parse(raw) as { error?: unknown; path?: unknown; operationType?: unknown };
       if (typeof parsed.error === 'string' && parsed.error.trim()) {
-        const pathLabel = typeof parsed.path === 'string' && parsed.path.trim() ? ` (${parsed.path})` : '';
+        const hasPath = typeof parsed.path === 'string' && parsed.path.trim();
+        const hasOp = typeof parsed.operationType === 'string' && parsed.operationType.trim();
+        const pathLabel = hasPath
+          ? hasOp
+            ? ` [${parsed.operationType} on ${parsed.path}]`
+            : ` (${parsed.path})`
+          : '';
         return `${parsed.error}${pathLabel}`;
       }
     } catch {

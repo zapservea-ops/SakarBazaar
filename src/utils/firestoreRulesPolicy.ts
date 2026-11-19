@@ -294,3 +294,177 @@ export function canDeletePaidCampaignInFirestore(
   if (!isPolicyOwner(auth)) return false;
   return internalStatus === 'Cancelled' || internalStatus === 'Completed' || internalStatus === 'Planned';
 }
+
+export const IPO_REQUIRED_KEYS = [
+  'companyName', 'slug', 'segment', 'status',
+  'verificationStatus', 'isArchived', 'deletionStatus',
+  'updatedByUid', 'createdAt', 'updatedAt',
+] as const;
+
+export const IPO_ALLOWED_KEYS = new Set([
+  'migrationKey', 'companyName', 'slug', 'segment', 'status', 'issueSize', 'priceBand', 'lotSize',
+  'filingDate', 'openingDate', 'closingDate', 'allotmentDate', 'listingDate',
+  'sellingShareholder', 'offerType', 'summary', 'officialDocuments', 'sourceName',
+  'sourceUrl', 'verificationStatus', 'previousVerificationStatus', 'isArchived',
+  'deletionStatus', 'lastVerifiedAt', 'updatedByUid', 'createdAt', 'updatedAt',
+]);
+
+export const IPO_ALLOWED_STATUSES = new Set([
+  'Draft', 'Awaiting Verification', 'Rejected', 'Upcoming', 'Open', 'Closed', 'Listed',
+  'Archived', 'Unpublished', 'Pending Deletion', 'Deleted',
+]);
+
+export const IPO_ALLOWED_VERIFICATION_STATUSES = new Set([
+  'awaiting_verification', 'verified', 'unpublished', 'archived', 'rejected', 'proposed',
+]);
+
+export function isValidIpoSchemaForRules(doc: Record<string, unknown>): { valid: boolean; reason?: string } {
+  for (const req of IPO_REQUIRED_KEYS) {
+    if (!(req in doc) || doc[req] === undefined) {
+      return { valid: false, reason: `Missing required IPO field: ${req}` };
+    }
+  }
+  for (const key of Object.keys(doc)) {
+    if (!IPO_ALLOWED_KEYS.has(key)) {
+      return { valid: false, reason: `Disallowed IPO field for firestore.rules: ${key}` };
+    }
+  }
+  if (typeof doc.companyName !== 'string' || doc.companyName.length < 2 || doc.companyName.length > 160) {
+    return { valid: false, reason: 'Invalid companyName length' };
+  }
+  if (typeof doc.slug !== 'string' || doc.slug.length < 3 || doc.slug.length > 160 || !/^[a-z0-9-]+$/.test(doc.slug)) {
+    return { valid: false, reason: 'Invalid slug format' };
+  }
+  if (doc.segment !== 'Mainboard' && doc.segment !== 'SME') {
+    return { valid: false, reason: 'Invalid segment' };
+  }
+  if (typeof doc.status !== 'string' || !IPO_ALLOWED_STATUSES.has(doc.status)) {
+    return { valid: false, reason: `Disallowed IPO status: ${String(doc.status)}` };
+  }
+  if (typeof doc.verificationStatus !== 'string' || !IPO_ALLOWED_VERIFICATION_STATUSES.has(doc.verificationStatus)) {
+    return { valid: false, reason: `Invalid verificationStatus: ${String(doc.verificationStatus)}` };
+  }
+  if (typeof doc.isArchived !== 'boolean') {
+    return { valid: false, reason: 'isArchived must be boolean' };
+  }
+  if (
+    doc.deletionStatus !== 'none' &&
+    doc.deletionStatus !== 'pending_approval' &&
+    doc.deletionStatus !== 'approved' &&
+    doc.deletionStatus !== 'deleted'
+  ) {
+    return { valid: false, reason: `Invalid deletionStatus: ${String(doc.deletionStatus)}` };
+  }
+  if (doc.verificationStatus === 'verified') {
+    const publicStatuses = new Set(['Upcoming', 'Open', 'Closed', 'Listed']);
+    if (doc.isArchived !== false || !publicStatuses.has(String(doc.status)) || doc.deletionStatus !== 'none') {
+      return { valid: false, reason: 'Verified IPO violates public invariants (isArchived=false, public status, deletionStatus=none)' };
+    }
+  }
+  return { valid: true };
+}
+
+export const ARTICLE_REQUIRED_KEYS = [
+  'slug', 'category', 'author', 'status', 'verificationStatus',
+  'language', 'createdByUid', 'updatedAt', 'createdAt',
+] as const;
+
+export const ARTICLE_ALLOWED_STATUSES = new Set([
+  'Draft', 'Awaiting Verification', 'Verified', 'Published',
+  'Expired', 'Retained', 'Pending Deletion', 'Deletion In Progress', 'Deleted', 'Archived',
+]);
+
+export const ARTICLE_ALLOWED_CATEGORIES = new Set([
+  'Markets', 'IPO', 'Corporate', 'Economy', 'RBI', 'Banking', 'Technology', 'Personal finance',
+]);
+
+export function isValidArticleSchemaForRules(doc: Record<string, unknown>): { valid: boolean; reason?: string } {
+  for (const req of ARTICLE_REQUIRED_KEYS) {
+    if (!(req in doc) || doc[req] === undefined || doc[req] === null) {
+      return { valid: false, reason: `Missing required Article field: ${req}` };
+    }
+  }
+  for (const key of Object.keys(doc)) {
+    if (!ARTICLE_ALLOWED_KEYS.has(key)) {
+      return { valid: false, reason: `Disallowed Article field for firestore.rules: ${key}` };
+    }
+  }
+  if (typeof doc.slug !== 'string' || doc.slug.length < 3 || doc.slug.length > 160 || !/^[a-z0-9-]+$/.test(doc.slug)) {
+    return { valid: false, reason: 'Invalid article slug format' };
+  }
+  if (typeof doc.category !== 'string' || !ARTICLE_ALLOWED_CATEGORIES.has(doc.category)) {
+    return { valid: false, reason: `Disallowed article category: ${String(doc.category)}` };
+  }
+  if (typeof doc.author !== 'string' || doc.author.length < 2 || doc.author.length > 120) {
+    return { valid: false, reason: 'Invalid article author length' };
+  }
+  if (typeof doc.status !== 'string' || !ARTICLE_ALLOWED_STATUSES.has(doc.status)) {
+    return { valid: false, reason: `Disallowed article status: ${String(doc.status)}` };
+  }
+  if (
+    doc.verificationStatus !== 'awaiting_verification' &&
+    doc.verificationStatus !== 'verified' &&
+    doc.verificationStatus !== 'unverified'
+  ) {
+    return { valid: false, reason: `Disallowed article verificationStatus: ${String(doc.verificationStatus)}` };
+  }
+  if (doc.language !== 'en' && doc.language !== 'hi' && doc.language !== 'bilingual') {
+    return { valid: false, reason: `Disallowed article language: ${String(doc.language)}` };
+  }
+  if (
+    'deletionStatus' in doc &&
+    doc.deletionStatus !== null &&
+    doc.deletionStatus !== undefined &&
+    !['none', 'pending_approval', 'approved', 'in_progress', 'partial_failure', 'deleted'].includes(String(doc.deletionStatus))
+  ) {
+    return { valid: false, reason: `Disallowed article deletionStatus: ${String(doc.deletionStatus)}` };
+  }
+  return { valid: true };
+}
+
+export const MEDIA_ASSET_ALLOWED_KEYS = new Set([
+  'fileName', 'storagePath', 'mediaType', 'duration', 'width', 'height',
+  'sizeBytes', 'credit', 'usageRightsConfirmed', 'isPublic', 'expiresAtMs', 'expiresAt',
+  'poster', 'captions', 'transcript', 'associatedArticleId', 'associatedArticleIds',
+  'youtubeVideoId', 'youtubeUrl', 'uploadedByUid', 'createdAt', 'updatedAt',
+]);
+
+export const MEDIA_PAYLOAD_ALLOWED_KEYS = new Set([
+  'mediaId', 'mimeType', 'sizeBytes', 'dataUrl', 'isPublic',
+  'expiresAt', 'uploadedByUid', 'createdAt', 'updatedAt',
+]);
+
+export const AUDIT_LOG_ALLOWED_ACTIONS = new Set([
+  'create_draft', 'mark_awaiting_verification', 'verify',
+  'publish', 'archive', 'update', 'extend_duration', 'retain_private',
+  'restore_article', 'approve_delete', 'start_delete', 'complete_delete',
+  'partial_delete_failure', 'retry_delete', 'ipo_source_check',
+  'ipo_review_approve', 'ipo_review_reject', 'export_backup',
+  'restore_backup', 'permission_update', 'paid_update', 'media_upload', 'media_delete',
+]);
+
+export function isValidAuditLogPayloadForRules(doc: Record<string, unknown>): { valid: boolean; reason?: string } {
+  const required = ['action', 'entityType', 'entityId', 'actorUid', 'actorEmail', 'nextStatus', 'summary', 'createdAt'];
+  const allowed = new Set([...required, 'previousStatus']);
+  for (const r of required) {
+    if (!(r in doc) || doc[r] === undefined) {
+      return { valid: false, reason: `Missing auditLog field: ${r}` };
+    }
+  }
+  for (const k of Object.keys(doc)) {
+    if (!allowed.has(k)) {
+      return { valid: false, reason: `Disallowed auditLog field: ${k}` };
+    }
+  }
+  if (typeof doc.action !== 'string' || !AUDIT_LOG_ALLOWED_ACTIONS.has(doc.action)) {
+    return { valid: false, reason: `Disallowed audit action: ${String(doc.action)}` };
+  }
+  if (!isValidFirestoreDocId(String(doc.entityId ?? ''))) {
+    return { valid: false, reason: 'Invalid audit entityId' };
+  }
+  if (typeof doc.summary !== 'string' || doc.summary.length < 3 || doc.summary.length > 400) {
+    return { valid: false, reason: 'Invalid audit summary length' };
+  }
+  return { valid: true };
+}
+

@@ -430,7 +430,9 @@ export const CATEGORY_LABELS: Record<LanguageCode, Record<NewsCategory, string>>
 
 export const IPO_STATUS_LABELS: Record<LanguageCode, Record<IpoStatus, string>> = {
   en: {
+    Draft: 'Draft (Private)',
     'Awaiting Verification': 'Awaiting Official Verification',
+    Rejected: 'Rejected',
     'Proposed OFS': 'Proposed Offer for Sale',
     Open: 'Open',
     Upcoming: 'Upcoming',
@@ -442,7 +444,9 @@ export const IPO_STATUS_LABELS: Record<LanguageCode, Record<IpoStatus, string>> 
     Deleted: 'Deleted',
   },
   hi: {
+    Draft: 'ड्राफ्ट (निजी)',
     'Awaiting Verification': 'आधिकारिक सत्यापन लंबित',
+    Rejected: 'अस्वीकृत',
     'Proposed OFS': 'प्रस्तावित बिक्री प्रस्ताव',
     Open: 'खुला',
     Upcoming: 'आगामी',

@@ -119,7 +119,7 @@ export function AdminMediaLibrary({
       setRightsConfirmed(false);
       setReplacingId(null);
       setUploadTab('none');
-      await onRefresh();
+      await onRefresh({ scope: 'media' });
       onNotify({
         tone: 'ok',
         text: replacingId ? 'Replaced photograph in Media Library.' : 'Added compressed photograph to Media Library.',
@@ -152,7 +152,7 @@ export function AdminMediaLibrary({
       });
       resetYouTubeForm();
       setUploadTab('none');
-      await onRefresh();
+      await onRefresh({ scope: 'media' });
       onNotify({ tone: 'ok', text: `Saved YouTube video ${parsedYt.videoId} to Media Library.` });
     } catch (err) {
       onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Failed to save YouTube link.') });
@@ -172,7 +172,7 @@ export function AdminMediaLibrary({
         onNotify({ tone: 'err', text: res.reason || 'Media asset is still referenced by articles.' });
         return;
       }
-      await onRefresh();
+      await onRefresh({ scope: 'media' });
       onNotify({ tone: 'ok', text: 'Unreferenced media asset deleted cleanly.' });
     } catch (err) {
       onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Delete failed.') });

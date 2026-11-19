@@ -1,16 +1,22 @@
+import type { SebiIpoFiling } from '../data/sebiIpoData';
 import type {
+  AuditLogRecord,
   IpoCatalogClassificationType,
   IpoCatalogRecordClassification,
   IpoConflictItem,
   IpoConflictReport,
   IpoIdentityMatchType,
+  IpoManagementCategory,
+  IpoManagementSortField,
   IpoRow,
+  IpoRowActionId,
   IpoSegment,
   IpoSourceDiffItem,
   IpoSourceReviewRecord,
   ManagedIpoRecord,
   StoredArticleDoc,
   UnifiedIpoPreviewEntry,
+  UnifiedManagedIpoItem,
 } from '../types/sakarbazaar';
 
 const GENERIC_PORTAL_URLS = new Set([
@@ -85,7 +91,7 @@ export function calculateIpoStatusFromDates(params: {
   openingDate?: string | null;
   closingDate?: string | null;
   listingDate?: string | null;
-  verificationStatus?: 'awaiting_verification' | 'verified' | 'unpublished' | 'archived';
+  verificationStatus?: ManagedIpoRecord['verificationStatus'];
   currentStatus?: ManagedIpoRecord['status'];
   isArchived?: boolean;
   deletionStatus?: ManagedIpoRecord['deletionStatus'];
@@ -104,18 +110,27 @@ export function calculateIpoStatusFromDates(params: {
   if (params.isArchived || params.verificationStatus === 'archived' || params.currentStatus === 'Archived') {
     return 'Archived';
   }
+  if (params.verificationStatus === 'rejected' || params.currentStatus === 'Rejected') {
+    return 'Rejected';
+  }
   if (params.verificationStatus === 'unpublished' || params.currentStatus === 'Unpublished') {
     return 'Unpublished';
+  }
+  if (params.currentStatus === 'Draft' && params.verificationStatus !== 'verified') {
+    return 'Draft';
+  }
+
+  if (
+    params.verificationStatus === 'awaiting_verification' ||
+    params.verificationStatus === 'proposed'
+  ) {
+    return 'Awaiting Verification';
   }
 
   const today = params.todayIst ?? getIstDateString();
   const openIso = normalizeToIsoDate(params.openingDate);
   const closeIso = normalizeToIsoDate(params.closingDate);
   const listIso = normalizeToIsoDate(params.listingDate);
-
-  if (params.verificationStatus === 'awaiting_verification' && !openIso && !listIso) {
-    return 'Awaiting Verification';
-  }
 
   if (listIso && today >= listIso) {
     return 'Listed';
@@ -138,6 +153,9 @@ export function isIpoPubliclyVisible(ipo: {
   if (ipo.verificationStatus !== 'verified') return false;
   if (ipo.isArchived) return false;
   if (
+    ipo.status === 'Draft' ||
+    ipo.status === 'Awaiting Verification' ||
+    ipo.status === 'Rejected' ||
     ipo.status === 'Archived' ||
     ipo.status === 'Unpublished' ||
     ipo.status === 'Pending Deletion' ||
@@ -1656,4 +1674,884 @@ export function buildIpoBackfillDryRunReport(
     items,
   };
 }
+
+export function isOfficialSebiUrl(rawUrl: string | null | undefined): boolean {
+  const clean = (rawUrl ?? '').trim();
+  if (!clean) return false;
+  try {
+    const parsed = new URL(clean);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === 'sebi.gov.in' || host === 'www.sebi.gov.in';
+  } catch {
+    return false;
+  }
+}
+
+export interface ManualIpoVerificationGuardResult {
+  allowed: boolean;
+  reason?: string;
+}
+
+/**
+ * Prevents manual IPO form entries from bypassing official SEBI verification into public /ipo & /calendar visibility.
+ * - New manual IPOs MUST save as private 'Draft' or 'Awaiting Verification' (never directly 'verified').
+ * - Existing unverified dossiers cannot be flipped to 'verified' via manual dropdown without Section 10 SEBI approval.
+ * - Already-verified SEBI dossiers may still save minor field edits while preserving their official SEBI provenance.
+ */
+export function evaluateManualIpoVerificationGuard(params: {
+  isNew: boolean;
+  requestedVerificationStatus: ManagedIpoRecord['verificationStatus'];
+  existingVerificationStatus?: ManagedIpoRecord['verificationStatus'];
+  existingLastVerifiedAt?: string;
+  sourceUrl?: string;
+  officialDocuments?: string[];
+  allowReviewedPromotion?: boolean;
+}): ManualIpoVerificationGuardResult {
+  if (params.requestedVerificationStatus !== 'verified') {
+    return { allowed: true };
+  }
+  if (params.allowReviewedPromotion) {
+    return { allowed: true };
+  }
+  const hasOfficialDoc =
+    isOfficialSebiUrl(params.sourceUrl) ||
+    (params.officialDocuments ?? []).some((u) => isOfficialSebiUrl(u));
+
+  if (!params.isNew && params.existingVerificationStatus === 'verified' && (hasOfficialDoc || Boolean(params.existingLastVerifiedAt))) {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    reason:
+      'Manual IPO entries cannot be marked Verified or published directly from a form dropdown. Save as Draft or Awaiting Verification first, or queue an official sebi.gov.in filing to Section 10 (IPO Source Review) for verification approval.',
+  };
+}
+
+export const IPO_MANAGEMENT_CATEGORIES: IpoManagementCategory[] = [
+  'Upcoming',
+  'Open',
+  'Closed',
+  'Listed',
+  'Awaiting Verification',
+  'Draft',
+  'Rejected',
+  'Archived',
+  'Pending Deletion',
+  'Deleted',
+];
+
+function extractRecordMillis(val: unknown): number | null {
+  if (typeof val === 'number' && Number.isFinite(val)) return val;
+  if (val && typeof val === 'object') {
+    const obj = val as { toMillis?: () => number; seconds?: number };
+    if (typeof obj.toMillis === 'function') {
+      try {
+        return obj.toMillis();
+      } catch {
+        return null;
+      }
+    }
+    if (typeof obj.seconds === 'number' && Number.isFinite(obj.seconds)) {
+      return obj.seconds * 1000;
+    }
+  }
+  if (typeof val === 'string' && val.trim()) {
+    const iso = normalizeToIsoDate(val);
+    if (iso) {
+      const parsed = Date.parse(`${iso}T00:00:00Z`);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    // Strip IST middle dot notes like "18 Nov 2026 · 11:00 AM IST"
+    const cleanDate = val.split('·')[0]?.trim();
+    const dmyIso = normalizeToIsoDate(cleanDate);
+    if (dmyIso) {
+      const parsed = Date.parse(`${dmyIso}T00:00:00Z`);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    const direct = Date.parse(val);
+    return Number.isFinite(direct) ? direct : null;
+  }
+  return null;
+}
+
+function dateToSortMs(raw: string | null | undefined): number {
+  const iso = normalizeToIsoDate(raw);
+  if (!iso) return 0;
+  const parsed = Date.parse(`${iso}T00:00:00Z`);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractYearFromDates(values: Array<string | null | undefined>): number | null {
+  for (const val of values) {
+    if (!val) continue;
+    const match = /\b(20\d{2}|19\d{2})\b/.exec(val);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+  return null;
+}
+
+export function classifyUnifiedIpoCategory(
+  record: Pick<ManagedIpoRecord, 'status' | 'verificationStatus' | 'isArchived' | 'deletionStatus' | 'openingDate' | 'closingDate' | 'listingDate'>,
+  todayIst?: string,
+): IpoManagementCategory {
+  if (record.deletionStatus === 'deleted' || record.status === 'Deleted') {
+    return 'Deleted';
+  }
+  if (
+    record.deletionStatus === 'pending_approval' ||
+    record.deletionStatus === 'approved' ||
+    record.status === 'Pending Deletion'
+  ) {
+    return 'Pending Deletion';
+  }
+  if (record.isArchived || record.verificationStatus === 'archived' || record.status === 'Archived') {
+    return 'Archived';
+  }
+  if (record.status === 'Rejected' || record.verificationStatus === 'rejected') {
+    return 'Rejected';
+  }
+  if (record.status === 'Draft' || record.status === 'Unpublished' || record.verificationStatus === 'unpublished') {
+    return 'Draft';
+  }
+  if (
+    record.status === 'Awaiting Verification' ||
+    record.verificationStatus === 'awaiting_verification' ||
+    record.verificationStatus === 'proposed'
+  ) {
+    return 'Awaiting Verification';
+  }
+  const computed = calculateIpoStatusFromDates({
+    openingDate: record.openingDate,
+    closingDate: record.closingDate,
+    listingDate: record.listingDate,
+    verificationStatus: record.verificationStatus,
+    currentStatus: record.status,
+    isArchived: record.isArchived,
+    deletionStatus: record.deletionStatus,
+    todayIst,
+  });
+  if (computed === 'Listed' || computed === 'Closed' || computed === 'Open' || computed === 'Upcoming') {
+    return computed;
+  }
+  return 'Awaiting Verification';
+}
+
+export function convertCatalogIpoToManagedIpo(row: IpoRow, todayIst?: string): ManagedIpoRecord {
+  const officialUrls = [
+    ...(row.officialDocuments ?? []).map((d) => d.url ?? '').filter((u) => /^https?:\/\//i.test(u)),
+    ...(row.sourceUrl && /^https?:\/\//i.test(row.sourceUrl) ? [row.sourceUrl] : []),
+  ];
+  const uniqueUrls = [...new Set(officialUrls)].slice(0, 6);
+  const openingDate = normalizeToIsoDate(row.openDate) ?? row.openDate ?? undefined;
+  const closingDate = normalizeToIsoDate(row.closeDate) ?? row.closeDate ?? undefined;
+  const allotmentDate = normalizeToIsoDate(row.allotmentDate) ?? row.allotmentDate ?? undefined;
+  const listingDate = normalizeToIsoDate(row.listingDate) ?? row.listingDate ?? undefined;
+  const filingDate = normalizeToIsoDate(row.filingDate) ?? row.filingDate ?? undefined;
+
+  const verStatus: ManagedIpoRecord['verificationStatus'] =
+    row.verificationStatus === 'verified'
+      ? 'verified'
+      : row.verificationStatus === 'archived'
+        ? 'archived'
+        : row.verificationStatus === 'unpublished'
+          ? 'unpublished'
+          : row.verificationStatus === 'rejected'
+            ? 'rejected'
+            : row.verificationStatus === 'proposed'
+              ? 'proposed'
+              : 'awaiting_verification';
+
+  const mappedStatus =
+    row.status === 'Proposed OFS'
+      ? 'Awaiting Verification'
+      : (row.status as ManagedIpoRecord['status']);
+
+  const calculated = calculateIpoStatusFromDates({
+    openingDate,
+    closingDate,
+    listingDate,
+    verificationStatus: verStatus,
+    currentStatus: mappedStatus,
+    isArchived: verStatus === 'archived' || mappedStatus === 'Archived',
+    deletionStatus: 'none',
+    todayIst,
+  });
+
+  const migrationKey = buildStableIpoMigrationKey({
+    id: row.id,
+    companyName: row.company,
+    segment: row.segment,
+    filingDate,
+    openingDate,
+    listingDate,
+    offerType: row.offerType,
+    sourceUrl: row.sourceUrl,
+    officialDocuments: uniqueUrls,
+  });
+
+  return {
+    id: row.id,
+    migrationKey,
+    companyName: row.company,
+    slug: row.slug,
+    segment: row.segment,
+    status: calculated,
+    issueSize: row.issueSize ?? undefined,
+    priceBand: row.priceBand ?? undefined,
+    filingDate,
+    openingDate,
+    closingDate,
+    allotmentDate,
+    listingDate,
+    sellingShareholder: row.sellingShareholder ?? undefined,
+    offerType: row.offerType ?? undefined,
+    summary: row.summary,
+    officialDocuments: uniqueUrls,
+    sourceName: row.sourceName,
+    sourceUrl: row.sourceUrl ?? uniqueUrls[0],
+    verificationStatus: verStatus,
+    isArchived: verStatus === 'archived' || calculated === 'Archived',
+    deletionStatus: 'none',
+    lastVerifiedAt: row.lastVerifiedAt ?? undefined,
+    updatedByUid: 'built-in-catalog',
+    updatedAt: row.lastVerifiedAt ?? filingDate ?? undefined,
+  };
+}
+
+export function convertSebiFilingToManagedIpo(
+  filing: SebiIpoFiling,
+  todayIst?: string,
+): ManagedIpoRecord {
+  const filingDate = normalizeToIsoDate(filing.filingDate) ?? filing.filingDate;
+  const openingDate = normalizeToIsoDate(filing.openDate) ?? filing.openDate ?? undefined;
+  const closingDate = normalizeToIsoDate(filing.closeDate) ?? filing.closeDate ?? undefined;
+  const slug = filing.id
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 140) || 'sebi-ipo';
+
+  const officialDocuments = [
+    filing.sebiDocumentUrl,
+    ...(filing.exchangeNoticeUrl ? [filing.exchangeNoticeUrl] : []),
+  ]
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  const verificationStatus: ManagedIpoRecord['verificationStatus'] =
+    filing.scheduleStatus === 'Awaiting Schedule Notice' && !openingDate
+      ? 'awaiting_verification'
+      : 'verified';
+
+  const calculated = calculateIpoStatusFromDates({
+    openingDate,
+    closingDate,
+    verificationStatus,
+    currentStatus:
+      filing.scheduleStatus === 'Awaiting Schedule Notice'
+        ? 'Awaiting Verification'
+        : filing.scheduleStatus,
+    isArchived: false,
+    deletionStatus: 'none',
+    todayIst,
+  });
+
+  const migrationKey = buildStableIpoMigrationKey({
+    id: filing.id,
+    companyName: filing.companyName,
+    segment: filing.category,
+    filingDate,
+    openingDate,
+    offerType: filing.documentType,
+    sourceUrl: filing.sebiDocumentUrl,
+    officialDocuments,
+  });
+
+  return {
+    id: filing.id,
+    migrationKey,
+    companyName: filing.companyName,
+    slug,
+    segment: filing.category,
+    status: calculated,
+    issueSize: filing.issueSize,
+    priceBand: filing.priceBand ?? undefined,
+    filingDate,
+    openingDate,
+    closingDate,
+    offerType: `${filing.documentType} Filing`,
+    summary: filing.summary,
+    officialDocuments,
+    sourceName: 'SEBI Official Public Issues',
+    sourceUrl: filing.sebiDocumentUrl,
+    verificationStatus,
+    isArchived: false,
+    deletionStatus: 'none',
+    lastVerifiedAt: normalizeToIsoDate(filing.lastCheckedDate.split('·')[0]?.trim()) ?? undefined,
+    updatedByUid: 'built-in-sebi-filings',
+    updatedAt: filing.lastCheckedDate,
+  };
+}
+
+function buildUnifiedItemFromManagedRecord(params: {
+  record: ManagedIpoRecord;
+  sourceOrigin: UnifiedManagedIpoItem['sourceOrigin'];
+  isPersistedInFirestore: boolean;
+  todayIst?: string;
+  needsReview?: boolean;
+  conflictNotes?: string[];
+  deletedHistory?: UnifiedManagedIpoItem['deletedHistory'];
+}): UnifiedManagedIpoItem {
+  const { record } = params;
+  const category = classifyUnifiedIpoCategory(record, params.todayIst);
+  const openingDate = normalizeToIsoDate(record.openingDate) ?? record.openingDate?.trim() ?? null;
+  const closingDate = normalizeToIsoDate(record.closingDate) ?? record.closingDate?.trim() ?? null;
+  const listingDate = normalizeToIsoDate(record.listingDate) ?? record.listingDate?.trim() ?? null;
+  const filingDate = normalizeToIsoDate(record.filingDate) ?? record.filingDate?.trim() ?? null;
+  const updatedMs =
+    extractRecordMillis(record.updatedAt) ??
+    extractRecordMillis(record.createdAt) ??
+    extractRecordMillis(record.lastVerifiedAt) ??
+    dateToSortMs(listingDate ?? closingDate ?? openingDate ?? filingDate) ??
+    0;
+  const lastUpdatedIso =
+    updatedMs > 0 ? new Date(updatedMs).toISOString().slice(0, 10) : null;
+  const year = extractYearFromDates([openingDate, closingDate, listingDate, filingDate, lastUpdatedIso]);
+
+  return {
+    id: record.id,
+    slug: record.slug,
+    migrationKey:
+      record.migrationKey ||
+      buildStableIpoMigrationKey({
+        id: record.id,
+        companyName: record.companyName,
+        segment: record.segment,
+        filingDate,
+        openingDate,
+        listingDate,
+        offerType: record.offerType,
+        sourceUrl: record.sourceUrl,
+        officialDocuments: record.officialDocuments,
+      }),
+    companyName: record.companyName,
+    segment: record.segment,
+    category,
+    rawStatus: record.status,
+    verificationStatus: record.verificationStatus,
+    sourceOrigin: params.sourceOrigin,
+    isPersistedInFirestore: params.isPersistedInFirestore,
+    isPubliclyVisible: isIpoPubliclyVisible({
+      ...record,
+      status: record.status,
+    }),
+    needsReview: Boolean(params.needsReview),
+    potentialDuplicateIds: [],
+    conflictNotes: [...(params.conflictNotes ?? [])],
+    openingDate,
+    closingDate,
+    listingDate,
+    filingDate,
+    year,
+    lastUpdatedIso,
+    lastUpdatedMs: updatedMs,
+    officialSourceName: record.sourceName?.trim() || 'Not specified',
+    officialSourceUrl:
+      record.sourceUrl?.trim() ||
+      (record.officialDocuments && record.officialDocuments[0]?.trim()) ||
+      null,
+    deletionStatus: record.deletionStatus ?? 'none',
+    record,
+    deletedHistory: params.deletedHistory,
+  };
+}
+
+/**
+ * Unifies all genuine IPO sources (Firestore /ipos, built-in IPO_ALL_RECORDS,
+ * built-in SEBI_IPO_FILINGS, and retained Deleted IPO audit history) into a single
+ * de-duplicated list while NEVER auto-merging conflicting company names and ALWAYS
+ * flagging uncertain/duplicate records as Needs Review.
+ */
+export function buildUnifiedIpoManagementList(params: {
+  firestoreIpos: ManagedIpoRecord[];
+  staticCatalogIpos: IpoRow[];
+  sebiFilings: SebiIpoFiling[];
+  auditLogs?: AuditLogRecord[];
+  reviews?: IpoSourceReviewRecord[];
+  todayIso?: string;
+}): UnifiedManagedIpoItem[] {
+  const todayIso = params.todayIso ?? getIstDateString();
+  const reviews = params.reviews ?? [];
+  const auditLogs = params.auditLogs ?? [];
+
+  const pendingReviewTargetIds = new Set(
+    reviews.filter((r) => r.reviewStatus === 'Needs Review' && r.targetIpoId).map((r) => r.targetIpoId!),
+  );
+  const pendingReviewKeys = new Set(
+    reviews.filter((r) => r.reviewStatus === 'Needs Review' && r.migrationKey).map((r) => r.migrationKey!),
+  );
+
+  const items: UnifiedManagedIpoItem[] = [];
+  const seenIds = new Set<string>();
+  const seenSlugs = new Set<string>();
+  const seenMigrationKeys = new Set<string>();
+
+  // 1. Firestore /ipos documents always have primary authority for persisted state
+  for (const fsIpo of params.firestoreIpos) {
+    const migKey =
+      fsIpo.migrationKey ||
+      buildStableIpoMigrationKey({
+        id: fsIpo.id,
+        companyName: fsIpo.companyName,
+        segment: fsIpo.segment,
+        filingDate: fsIpo.filingDate,
+        openingDate: fsIpo.openingDate,
+        listingDate: fsIpo.listingDate,
+        offerType: fsIpo.offerType,
+        sourceUrl: fsIpo.sourceUrl,
+        officialDocuments: fsIpo.officialDocuments,
+      });
+    const notes: string[] = [];
+    let needsReview =
+      pendingReviewTargetIds.has(fsIpo.id) || pendingReviewKeys.has(migKey);
+    if (needsReview) {
+      notes.push('Active SEBI source diff awaiting review in Section 10.');
+    }
+    if (!fsIpo.migrationKey) {
+      notes.push('Missing persisted migrationKey.');
+    }
+
+    seenIds.add(fsIpo.id);
+    if (fsIpo.slug) seenSlugs.add(fsIpo.slug.toLowerCase());
+    seenMigrationKeys.add(migKey);
+
+    items.push(
+      buildUnifiedItemFromManagedRecord({
+        record: fsIpo,
+        sourceOrigin: 'firestore',
+        isPersistedInFirestore: true,
+        todayIst: todayIso,
+        needsReview,
+        conflictNotes: notes,
+        deletedHistory:
+          fsIpo.status === 'Deleted' || fsIpo.deletionStatus === 'deleted'
+            ? {
+                deletedAtIso:
+                  (extractRecordMillis(fsIpo.updatedAt) &&
+                    new Date(extractRecordMillis(fsIpo.updatedAt)!).toISOString().slice(0, 10)) ||
+                  null,
+                summary: 'Marked Deleted in /ipos collection.',
+              }
+            : undefined,
+      }),
+    );
+  }
+
+  // 2. Built-in static catalog IPO_ALL_RECORDS (excluding explicit sample/fixture placeholders)
+  for (const row of params.staticCatalogIpos) {
+    const cls = classifyBuiltInIpoCatalogRecord(row, todayIso);
+    if (cls.classification === 'demonstration_sample') continue;
+
+    const managed = convertCatalogIpoToManagedIpo(row, todayIso);
+    const exactMatch =
+      seenIds.has(managed.id) ||
+      seenSlugs.has(managed.slug.toLowerCase()) ||
+      (managed.migrationKey ? seenMigrationKeys.has(managed.migrationKey) : false);
+    if (exactMatch) continue;
+
+    seenIds.add(managed.id);
+    seenSlugs.add(managed.slug.toLowerCase());
+    if (managed.migrationKey) seenMigrationKeys.add(managed.migrationKey);
+
+    const analysis = analyzeIpoCandidateMatch(params.firestoreIpos, {
+      id: managed.id,
+      migrationKey: managed.migrationKey,
+      companyName: managed.companyName,
+      segment: managed.segment,
+      filingDate: managed.filingDate,
+      openingDate: managed.openingDate,
+      closingDate: managed.closingDate,
+      listingDate: managed.listingDate,
+      offerType: managed.offerType,
+      sourceName: managed.sourceName || 'Built-in Editorial Dossier',
+      sourceUrl: managed.sourceUrl || '',
+      officialDocuments: managed.officialDocuments,
+    });
+
+    const notes: string[] = [];
+    let needsReview = cls.classification === 'unknown_review';
+    if (cls.classification === 'unknown_review') {
+      notes.push(cls.evidence);
+    }
+    if (!analysis.autoMergeAllowed && analysis.conflictWarning) {
+      needsReview = true;
+      notes.push(analysis.conflictWarning);
+    }
+
+    items.push(
+      buildUnifiedItemFromManagedRecord({
+        record: managed,
+        sourceOrigin: 'static_catalog',
+        isPersistedInFirestore: false,
+        todayIst: todayIso,
+        needsReview,
+        conflictNotes: notes,
+      }),
+    );
+  }
+
+  // 3. Built-in SEBI_IPO_FILINGS (7 filings shown on /calendar)
+  for (const filing of params.sebiFilings) {
+    const managed = convertSebiFilingToManagedIpo(filing, todayIso);
+    const exactMatch =
+      seenIds.has(managed.id) ||
+      seenSlugs.has(managed.slug.toLowerCase()) ||
+      (managed.migrationKey ? seenMigrationKeys.has(managed.migrationKey) : false);
+    if (exactMatch) continue;
+
+    seenIds.add(managed.id);
+    seenSlugs.add(managed.slug.toLowerCase());
+    if (managed.migrationKey) seenMigrationKeys.add(managed.migrationKey);
+
+    const analysis = analyzeIpoCandidateMatch(
+      items.map((it) => it.record),
+      {
+        id: managed.id,
+        migrationKey: managed.migrationKey,
+        companyName: managed.companyName,
+        segment: managed.segment,
+        filingDate: managed.filingDate,
+        openingDate: managed.openingDate,
+        closingDate: managed.closingDate,
+        offerType: managed.offerType,
+        documentType: filing.documentType,
+        sourceName: managed.sourceName || 'SEBI Official Public Issues',
+        sourceUrl: managed.sourceUrl || '',
+        officialDocuments: managed.officialDocuments,
+      },
+    );
+
+    const notes: string[] = [];
+    let needsReview = false;
+    if (!analysis.autoMergeAllowed && analysis.conflictWarning) {
+      needsReview = true;
+      notes.push(analysis.conflictWarning);
+    }
+
+    items.push(
+      buildUnifiedItemFromManagedRecord({
+        record: managed,
+        sourceOrigin: 'sebi_filings',
+        isPersistedInFirestore: false,
+        todayIst: todayIso,
+        needsReview,
+        conflictNotes: notes,
+      }),
+    );
+  }
+
+  // 4. Retained Deleted IPO history from auditLogs (where doc was permanently deleted from /ipos)
+  const seenDeletedAuditIds = new Set<string>();
+  for (const log of auditLogs) {
+    if (log.entityType !== 'ipo' || log.action !== 'complete_delete') continue;
+    const entityId = (log.entityId || '').trim();
+    if (!entityId || seenIds.has(entityId) || seenDeletedAuditIds.has(entityId)) continue;
+    seenDeletedAuditIds.add(entityId);
+
+    const quotedNameMatch = /"([^"]{2,160})"/.exec(log.summary || '');
+    const companyName = quotedNameMatch?.[1] || `Deleted IPO (${entityId})`;
+    const deletedMs = log.createdAtMs ?? extractRecordMillis(log.createdAt) ?? 0;
+    const deletedAtIso = deletedMs > 0 ? new Date(deletedMs).toISOString().slice(0, 10) : null;
+    const slug = sanitizeAuditSlug(companyName, entityId);
+
+    const syntheticDeleted: ManagedIpoRecord = {
+      id: entityId,
+      migrationKey: `deleted_${entityId}`,
+      companyName,
+      slug,
+      segment: 'Mainboard',
+      status: 'Deleted',
+      verificationStatus: 'unpublished',
+      isArchived: false,
+      deletionStatus: 'deleted',
+      summary: log.summary,
+      sourceName: 'Retained Deletion Audit Trail',
+      updatedByUid: log.actorUid || 'audit-history',
+      updatedAt: deletedMs || undefined,
+    };
+
+    items.push(
+      buildUnifiedItemFromManagedRecord({
+        record: syntheticDeleted,
+        sourceOrigin: 'deleted_history',
+        isPersistedInFirestore: false,
+        todayIst: todayIso,
+        needsReview: false,
+        conflictNotes: ['Retained deletion history record from immutable auditLogs.'],
+        deletedHistory: {
+          deletedAtIso,
+          actorEmail: log.actorEmail,
+          previousStatus: log.previousStatus,
+          summary: log.summary,
+        },
+      }),
+    );
+  }
+
+  // 5. Cross-check potential duplicates across non-deleted items WITHOUT auto-merging
+  const activeItems = items.filter((it) => it.category !== 'Deleted');
+  for (let i = 0; i < activeItems.length; i++) {
+    const keyI = normalizeIpoCompanyKey(activeItems[i].companyName);
+    if (keyI.length < 3) continue;
+    for (let j = i + 1; j < activeItems.length; j++) {
+      const keyJ = normalizeIpoCompanyKey(activeItems[j].companyName);
+      if (keyI === keyJ) {
+        activeItems[i].potentialDuplicateIds.push(activeItems[j].id);
+        activeItems[j].potentialDuplicateIds.push(activeItems[i].id);
+        activeItems[i].needsReview = true;
+        activeItems[j].needsReview = true;
+      }
+    }
+  }
+
+  return items;
+}
+
+function sanitizeAuditSlug(name: string, fallbackId: string): string {
+  const clean = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100);
+  if (clean.length >= 3) return clean;
+  const idClean = fallbackId.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 100);
+  return idClean.length >= 3 ? idClean : 'deleted-ipo';
+}
+
+export interface IpoManagementFilterCriteria {
+  search?: string;
+  segment?: 'All' | IpoSegment;
+  category?: 'All' | 'Needs Review' | IpoManagementCategory;
+  verificationStatus?: 'All' | ManagedIpoRecord['verificationStatus'];
+  year?: 'All' | number;
+  sortField?: IpoManagementSortField;
+}
+
+export function filterAndSortManagedIpos(
+  items: UnifiedManagedIpoItem[],
+  criteria: IpoManagementFilterCriteria,
+): UnifiedManagedIpoItem[] {
+  const q = (criteria.search ?? '').trim().toLowerCase();
+  const filtered = items.filter((item) => {
+    if (criteria.segment && criteria.segment !== 'All' && item.segment !== criteria.segment) {
+      return false;
+    }
+    if (criteria.category && criteria.category !== 'All') {
+      if (criteria.category === 'Needs Review') {
+        if (!item.needsReview) return false;
+      } else if (item.category !== criteria.category) {
+        return false;
+      }
+    }
+    if (
+      criteria.verificationStatus &&
+      criteria.verificationStatus !== 'All' &&
+      item.verificationStatus !== criteria.verificationStatus
+    ) {
+      return false;
+    }
+    if (criteria.year && criteria.year !== 'All' && item.year !== criteria.year) {
+      return false;
+    }
+    if (q) {
+      const hay = `${item.companyName} ${item.id} ${item.slug} ${item.officialSourceName} ${item.category}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const sortField = criteria.sortField ?? 'updated_desc';
+  return [...filtered].sort((a, b) => {
+    if (sortField === 'company_asc') {
+      return a.companyName.localeCompare(b.companyName);
+    }
+    if (sortField === 'opening_desc') {
+      const diff = dateToSortMs(b.openingDate) - dateToSortMs(a.openingDate);
+      return diff !== 0 ? diff : a.companyName.localeCompare(b.companyName);
+    }
+    if (sortField === 'opening_asc') {
+      const aMs = dateToSortMs(a.openingDate) || Number.MAX_SAFE_INTEGER;
+      const bMs = dateToSortMs(b.openingDate) || Number.MAX_SAFE_INTEGER;
+      const diff = aMs - bMs;
+      return diff !== 0 ? diff : a.companyName.localeCompare(b.companyName);
+    }
+    if (sortField === 'closing_desc') {
+      const diff = dateToSortMs(b.closingDate) - dateToSortMs(a.closingDate);
+      return diff !== 0 ? diff : a.companyName.localeCompare(b.companyName);
+    }
+    if (sortField === 'listing_desc') {
+      const diff = dateToSortMs(b.listingDate) - dateToSortMs(a.listingDate);
+      return diff !== 0 ? diff : a.companyName.localeCompare(b.companyName);
+    }
+    const diff = b.lastUpdatedMs - a.lastUpdatedMs;
+    return diff !== 0 ? diff : a.companyName.localeCompare(b.companyName);
+  });
+}
+
+export function summarizeIpoManagementCategories(
+  items: UnifiedManagedIpoItem[],
+): Record<'All' | 'Needs Review' | IpoManagementCategory, number> {
+  const counts: Record<'All' | 'Needs Review' | IpoManagementCategory, number> = {
+    All: items.length,
+    'Needs Review': 0,
+    Upcoming: 0,
+    Open: 0,
+    Closed: 0,
+    Listed: 0,
+    'Awaiting Verification': 0,
+    Draft: 0,
+    Rejected: 0,
+    Archived: 0,
+    'Pending Deletion': 0,
+    Deleted: 0,
+  };
+  for (const item of items) {
+    counts[item.category] = (counts[item.category] ?? 0) + 1;
+    if (item.needsReview) counts['Needs Review'] += 1;
+  }
+  return counts;
+}
+
+export interface IpoRowActionDescriptor {
+  id: IpoRowActionId;
+  label: string;
+  tone: 'primary' | 'ghost' | 'danger';
+  disabled?: boolean;
+  title?: string;
+}
+
+/**
+ * Returns the exact per-status action set enforcing Role permissions,
+ * live-public deletion safeguards, and Pending Deletion two-step discipline.
+ */
+export function getAvailableIpoRowActions(
+  item: UnifiedManagedIpoItem,
+  permissions: {
+    canManageIposAndReviews: boolean;
+    canApprovePermanentDeletion: boolean;
+    canExecutePermanentDeletion: boolean;
+  },
+): IpoRowActionDescriptor[] {
+  const canEdit = permissions.canManageIposAndReviews;
+  const canDelete = permissions.canExecutePermanentDeletion;
+  const canApproveDelete = permissions.canApprovePermanentDeletion;
+  const actions: IpoRowActionDescriptor[] = [];
+
+  if (!canEdit && item.category !== 'Deleted') {
+    return [];
+  }
+
+  switch (item.category) {
+    case 'Draft': {
+      actions.push({ id: 'edit', label: 'Edit', tone: 'ghost' });
+      actions.push({ id: 'submit_review', label: 'Submit for Review', tone: 'primary' });
+      if (canDelete && item.isPersistedInFirestore) {
+        actions.push({ id: 'execute_delete', label: 'Delete', tone: 'danger' });
+      }
+      break;
+    }
+    case 'Awaiting Verification': {
+      actions.push({ id: 'edit', label: 'Edit', tone: 'ghost' });
+      actions.push({
+        id: 'verify',
+        label: 'Verify',
+        tone: 'primary',
+        title: 'Requires an official sebi.gov.in filing URL on this record.',
+      });
+      actions.push({ id: 'reject', label: 'Reject', tone: 'danger' });
+      if (canDelete && item.isPersistedInFirestore) {
+        actions.push({ id: 'execute_delete', label: 'Delete', tone: 'danger' });
+      }
+      break;
+    }
+    case 'Upcoming':
+    case 'Open': {
+      actions.push({ id: 'edit', label: 'Edit', tone: 'ghost' });
+      actions.push({ id: 'unpublish', label: 'Unpublish', tone: 'ghost' });
+      actions.push({ id: 'archive', label: 'Archive', tone: 'ghost' });
+      if (canDelete) {
+        actions.push({
+          id: 'execute_delete',
+          label: 'Delete',
+          tone: 'danger',
+          disabled: item.isPubliclyVisible || !item.isPersistedInFirestore,
+          title: item.isPubliclyVisible
+            ? 'Blocked while live public. Unpublish, Archive, or Mark Pending Deletion first.'
+            : !item.isPersistedInFirestore
+              ? 'Built-in record must be Unpublished or Archived before deletion.'
+              : 'Delete non-public IPO record.',
+        });
+      }
+      break;
+    }
+    case 'Closed':
+    case 'Listed': {
+      actions.push({ id: 'edit', label: 'Edit', tone: 'ghost' });
+      actions.push({ id: 'archive', label: 'Archive', tone: 'ghost' });
+      actions.push({ id: 'restore', label: 'Restore', tone: 'ghost' });
+      if (canDelete) {
+        actions.push({
+          id: 'execute_delete',
+          label: 'Delete',
+          tone: 'danger',
+          disabled: item.isPubliclyVisible || !item.isPersistedInFirestore,
+          title: item.isPubliclyVisible
+            ? 'Blocked while live public. Archive or Unpublish first before deleting.'
+            : !item.isPersistedInFirestore
+              ? 'Built-in record must be Archived or Unpublished before deletion.'
+              : 'Delete non-public IPO record.',
+        });
+      }
+      break;
+    }
+    case 'Rejected': {
+      actions.push({ id: 'edit', label: 'Edit', tone: 'ghost' });
+      actions.push({ id: 'return_review', label: 'Return to Review', tone: 'primary' });
+      if (canDelete && item.isPersistedInFirestore) {
+        actions.push({ id: 'execute_delete', label: 'Delete', tone: 'danger' });
+      }
+      break;
+    }
+    case 'Archived': {
+      actions.push({ id: 'restore', label: 'Restore', tone: 'primary' });
+      if (canDelete && item.isPersistedInFirestore) {
+        actions.push({ id: 'execute_delete', label: 'Delete', tone: 'danger' });
+      }
+      break;
+    }
+    case 'Pending Deletion': {
+      actions.push({ id: 'cancel_delete', label: 'Cancel', tone: 'ghost' });
+      if (item.deletionStatus !== 'approved' && canApproveDelete) {
+        actions.push({ id: 'approve_delete', label: 'Approve', tone: 'primary' });
+      }
+      if (item.deletionStatus === 'approved' && canDelete) {
+        actions.push({ id: 'execute_delete', label: 'Execute', tone: 'danger' });
+      }
+      break;
+    }
+    case 'Deleted': {
+      actions.push({ id: 'view_history', label: 'View History', tone: 'ghost' });
+      break;
+    }
+  }
+
+  return actions;
+}
+
+
 

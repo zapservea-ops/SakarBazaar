@@ -18,7 +18,9 @@ export type HomepageNewsCategory = 'All' | 'Markets' | 'IPO' | 'Corporate' | 'Ec
 export type IpoSegment = 'Mainboard' | 'SME';
 
 export type IpoStatus =
+  | 'Draft'
   | 'Awaiting Verification'
+  | 'Rejected'
   | 'Proposed OFS'
   | 'Open'
   | 'Upcoming'
@@ -267,7 +269,7 @@ export interface IpoRow {
   slug: string;
   segment: IpoSegment;
   status: IpoStatus;
-  verificationStatus: 'awaiting_verification' | 'verified' | 'proposed' | 'unpublished' | 'archived';
+  verificationStatus: 'awaiting_verification' | 'verified' | 'proposed' | 'unpublished' | 'archived' | 'rejected';
   company: string;
   exchange?: string | null;
   issueSize: string | null;
@@ -507,7 +509,9 @@ export interface ManagedIpoRecord {
   slug: string;
   segment: IpoSegment;
   status:
+    | 'Draft'
     | 'Awaiting Verification'
+    | 'Rejected'
     | 'Upcoming'
     | 'Open'
     | 'Closed'
@@ -530,14 +534,79 @@ export interface ManagedIpoRecord {
   officialDocuments?: string[];
   sourceName?: string;
   sourceUrl?: string;
-  verificationStatus: 'awaiting_verification' | 'verified' | 'unpublished' | 'archived';
-  previousVerificationStatus?: 'awaiting_verification' | 'verified';
+  verificationStatus: 'awaiting_verification' | 'verified' | 'unpublished' | 'archived' | 'rejected' | 'proposed';
+  previousVerificationStatus?: 'awaiting_verification' | 'verified' | 'rejected';
   isArchived?: boolean;
   deletionStatus?: 'none' | 'pending_approval' | 'approved' | 'deleted';
   lastVerifiedAt?: string;
   updatedByUid: string;
   createdAt?: unknown;
   updatedAt?: unknown;
+}
+
+export type IpoManagementCategory =
+  | 'Upcoming'
+  | 'Open'
+  | 'Closed'
+  | 'Listed'
+  | 'Awaiting Verification'
+  | 'Draft'
+  | 'Rejected'
+  | 'Archived'
+  | 'Pending Deletion'
+  | 'Deleted';
+
+export type IpoSourceOrigin = 'firestore' | 'static_catalog' | 'sebi_filings' | 'deleted_history';
+
+export type IpoRowActionId =
+  | 'edit'
+  | 'submit_review'
+  | 'verify'
+  | 'reject'
+  | 'return_review'
+  | 'unpublish'
+  | 'archive'
+  | 'restore'
+  | 'request_delete'
+  | 'approve_delete'
+  | 'cancel_delete'
+  | 'execute_delete'
+  | 'view_history';
+
+export type IpoManagementSortField = 'updated_desc' | 'opening_desc' | 'opening_asc' | 'closing_desc' | 'listing_desc' | 'company_asc';
+
+export interface UnifiedManagedIpoItem {
+  id: string;
+  slug: string;
+  migrationKey: string;
+  companyName: string;
+  segment: IpoSegment;
+  category: IpoManagementCategory;
+  rawStatus: string;
+  verificationStatus: ManagedIpoRecord['verificationStatus'];
+  sourceOrigin: IpoSourceOrigin;
+  isPersistedInFirestore: boolean;
+  isPubliclyVisible: boolean;
+  needsReview: boolean;
+  potentialDuplicateIds: string[];
+  conflictNotes: string[];
+  openingDate: string | null;
+  closingDate: string | null;
+  listingDate: string | null;
+  filingDate: string | null;
+  year: number | null;
+  lastUpdatedIso: string | null;
+  lastUpdatedMs: number;
+  officialSourceName: string;
+  officialSourceUrl: string | null;
+  deletionStatus: NonNullable<ManagedIpoRecord['deletionStatus']>;
+  record: ManagedIpoRecord;
+  deletedHistory?: {
+    deletedAtIso: string | null;
+    actorEmail?: string;
+    previousStatus?: string;
+    summary?: string;
+  };
 }
 
 export interface IpoSourceDiffItem {

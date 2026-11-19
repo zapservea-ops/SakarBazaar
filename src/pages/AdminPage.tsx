@@ -14,6 +14,8 @@ import { AdminPendingDeletion } from '../components/admin/AdminPendingDeletion';
 import { AdminSettings } from '../components/admin/AdminSettings';
 import type {
   AdminNavItem,
+  AdminRefreshOptions,
+  AdminRefreshScope,
   AdminSectionKey,
   AdminWorkspaceData,
 } from '../components/admin/adminTypes';
@@ -58,6 +60,26 @@ const DEFAULT_WORKSPACE: AdminWorkspaceData = {
   },
 };
 
+function mergeRefreshScope(
+  a?: AdminRefreshScope,
+  b?: AdminRefreshScope,
+): AdminRefreshScope {
+  const rank: Record<AdminRefreshScope, number> = {
+    none: 0,
+    media: 1,
+    paid: 1,
+    settings: 1,
+    non_realtime: 2,
+    all: 3,
+  };
+  const sA = a ?? 'non_realtime';
+  const sB = b ?? 'non_realtime';
+  if (sA !== sB && rank[sA] === 1 && rank[sB] === 1) {
+    return 'non_realtime';
+  }
+  return rank[sA] >= rank[sB] ? sA : sB;
+}
+
 export function AdminPage() {
   const {
     user,
@@ -80,6 +102,7 @@ export function AdminPage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
   const loadingWorkspaceRef = useRef(false);
+  const pendingWorkspaceRefreshRef = useRef<AdminRefreshOptions | null>(null);
   const refreshingSessionRef = useRef(false);
   const tabSessionIdRef = useRef<string>(createTabSessionId());
   const hasSweptInitialExpiredRef = useRef(false);
@@ -97,61 +120,124 @@ export function AdminPage() {
     );
   }, [refreshArticles, refreshIpos]);
 
-  const loadWorkspace = useCallback(async (opts?: { manual?: boolean }) => {
-    if (!isAuthorizedEditor || adminRole === 'none' || loadingWorkspaceRef.current) return;
+  const loadWorkspace = useCallback(async (opts?: AdminRefreshOptions) => {
+    if (!isAuthorizedEditor || adminRole === 'none') return;
+    const scope: AdminRefreshScope = opts?.manual
+      ? 'all'
+      : opts?.scope ?? 'non_realtime';
+    if (scope === 'none' && !opts?.manual) {
+      return;
+    }
+
+    if (loadingWorkspaceRef.current) {
+      pendingWorkspaceRefreshRef.current = {
+        manual: Boolean(pendingWorkspaceRefreshRef.current?.manual || opts?.manual),
+        scope: mergeRefreshScope(pendingWorkspaceRefreshRef.current?.scope, scope),
+      };
+      return;
+    }
     loadingWorkspaceRef.current = true;
     setLoadingWorkspace(true);
     try {
-      const [
-        articlesRaw,
-        mediaBundle,
-        paidCampaigns,
-        ipos,
-        ipoReviews,
-        auditLogs,
-        systemSettings,
-      ] = await Promise.all([
-        fetchAllStoredArticles(),
-        fetchAllMediaLibraryItems(),
-        fetchPaidCampaigns(),
-        fetchAllManagedIpos(),
-        fetchIpoSourceReviews(),
-        fetchRecentAuditLogs(80),
-        fetchSystemSettings(),
-      ]);
+      if (scope === 'media') {
+        const mediaBundle = await fetchAllMediaLibraryItems();
+        setWorkspace((prev) => ({
+          ...prev,
+          media: mediaBundle.media,
+          payloadMap: mediaBundle.payloadMap,
+        }));
+      } else if (scope === 'paid') {
+        const paidCampaigns = await fetchPaidCampaigns();
+        setWorkspace((prev) => ({ ...prev, paidCampaigns }));
+      } else if (scope === 'settings') {
+        const [systemSettings, ownerBundle] = await Promise.all([
+          fetchSystemSettings(),
+          permissions.canManagePermissionsAndSecurity
+            ? Promise.all([
+                fetchAuthorizedEmails().catch(() => []),
+                fetchAdminUsers().catch(() => []),
+              ])
+            : Promise.resolve([[] as AdminWorkspaceData['authorizedEmails'], [] as AdminWorkspaceData['adminUsers']] as const),
+        ]);
+        setWorkspace((prev) => ({
+          ...prev,
+          systemSettings,
+          authorizedEmails: ownerBundle[0],
+          adminUsers: ownerBundle[1],
+        }));
+      } else if (scope === 'non_realtime') {
+        const [mediaBundle, paidCampaigns, systemSettings, ownerBundle] = await Promise.all([
+          fetchAllMediaLibraryItems(),
+          fetchPaidCampaigns(),
+          fetchSystemSettings(),
+          permissions.canManagePermissionsAndSecurity
+            ? Promise.all([
+                fetchAuthorizedEmails().catch(() => []),
+                fetchAdminUsers().catch(() => []),
+              ])
+            : Promise.resolve([[] as AdminWorkspaceData['authorizedEmails'], [] as AdminWorkspaceData['adminUsers']] as const),
+        ]);
+        setWorkspace((prev) => ({
+          ...prev,
+          media: mediaBundle.media,
+          payloadMap: mediaBundle.payloadMap,
+          paidCampaigns,
+          systemSettings,
+          authorizedEmails: ownerBundle[0],
+          adminUsers: ownerBundle[1],
+        }));
+      } else {
+        const [
+          articlesRaw,
+          mediaBundle,
+          paidCampaigns,
+          ipos,
+          ipoReviews,
+          auditLogs,
+          systemSettings,
+        ] = await Promise.all([
+          fetchAllStoredArticles(),
+          fetchAllMediaLibraryItems(),
+          fetchPaidCampaigns(),
+          fetchAllManagedIpos(),
+          fetchIpoSourceReviews(),
+          fetchRecentAuditLogs(80),
+          fetchSystemSettings(),
+        ]);
 
-      // Automatically transition elapsed expired Published articles to Expired & sync media visibility
-      const swept = await sweepExpiredPublishedArticles(articlesRaw);
-      const articles = swept > 0 ? await fetchAllStoredArticles() : articlesRaw;
-      if (swept > 0 || opts?.manual) {
-        await handlePublicContentChanged();
-      }
+        // Automatically transition elapsed expired Published articles to Expired & sync media visibility
+        const swept = await sweepExpiredPublishedArticles(articlesRaw);
+        const articles = swept > 0 ? await fetchAllStoredArticles() : articlesRaw;
+        if (swept > 0 || opts?.manual) {
+          await handlePublicContentChanged();
+        }
 
-      const [authorizedEmails, adminUsers] = permissions.canManagePermissionsAndSecurity
-        ? await Promise.all([
-            fetchAuthorizedEmails().catch(() => []),
-            fetchAdminUsers().catch(() => []),
-          ])
-        : [[], []];
+        const [authorizedEmails, adminUsers] = permissions.canManagePermissionsAndSecurity
+          ? await Promise.all([
+              fetchAuthorizedEmails().catch(() => []),
+              fetchAdminUsers().catch(() => []),
+            ])
+          : [[], []];
 
-      setWorkspace({
-        articles,
-        media: mediaBundle.media,
-        payloadMap: mediaBundle.payloadMap,
-        paidCampaigns,
-        ipos,
-        ipoReviews,
-        auditLogs,
-        authorizedEmails,
-        adminUsers,
-        systemSettings,
-      });
-
-      if (opts?.manual) {
-        setBanner({
-          tone: 'ok',
-          text: `Workspace data refreshed from Firestore (${articles.length} articles, ${ipos.length} IPOs, ${ipoReviews.length} IPO reviews${swept > 0 ? `, swept ${swept} expired` : ''}).`,
+        setWorkspace({
+          articles,
+          media: mediaBundle.media,
+          payloadMap: mediaBundle.payloadMap,
+          paidCampaigns,
+          ipos,
+          ipoReviews,
+          auditLogs,
+          authorizedEmails,
+          adminUsers,
+          systemSettings,
         });
+
+        if (opts?.manual) {
+          setBanner({
+            tone: 'ok',
+            text: `Workspace data refreshed from Firestore (${articles.length} articles, ${ipos.length} IPOs, ${ipoReviews.length} IPO reviews${swept > 0 ? `, swept ${swept} expired` : ''}).`,
+          });
+        }
       }
     } catch (err) {
       setBanner({
@@ -161,6 +247,11 @@ export function AdminPage() {
     } finally {
       loadingWorkspaceRef.current = false;
       setLoadingWorkspace(false);
+      const queued = pendingWorkspaceRefreshRef.current;
+      if (queued) {
+        pendingWorkspaceRefreshRef.current = null;
+        await loadWorkspace(queued);
+      }
     }
   }, [isAuthorizedEditor, adminRole, permissions.canManagePermissionsAndSecurity, handlePublicContentChanged]);
 
@@ -170,8 +261,8 @@ export function AdminPage() {
       return;
     }
 
-    // Load secondary non-subscribed admin collections & security allowlists
-    void loadWorkspace();
+    // Load non-subscribed collections + initial workspace snapshot once on mount
+    void loadWorkspace({ scope: 'all' });
 
     // Attach targeted authenticated Admin-only real-time listeners for operational collections
     const unsubscribe = subscribeToAdminOperationalCollections(

@@ -51,11 +51,15 @@ export function AdminExpiredArchive({
     setBusyId(art.id);
     try {
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
+      const updated = data.articles.map((a) =>
+        a.id === art.id ? { ...a, status: 'Retained' as const } : a,
+      );
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
         expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
+        knownArticles: updated,
         action: 'retain_private',
         payload: {
           ...cleanArt,
@@ -64,12 +68,9 @@ export function AdminExpiredArchive({
         },
       });
       if (art.mediaId) {
-        const updated = data.articles.map((a) =>
-          a.id === art.id ? { ...a, status: 'Retained' as const } : a,
-        );
         await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({ tone: 'ok', text: `Marked "${art.enHeadline || art.title}" as Retained Privately.` });
     } catch (err) {
@@ -86,11 +87,15 @@ export function AdminExpiredArchive({
     setBusyId(art.id);
     try {
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
+      const updated = data.articles.map((a) =>
+        a.id === art.id ? { ...a, status: 'Archived' as const } : a,
+      );
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
         expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
+        knownArticles: updated,
         action: 'archive',
         payload: {
           ...cleanArt,
@@ -99,12 +104,9 @@ export function AdminExpiredArchive({
         },
       });
       if (art.mediaId) {
-        const updated = data.articles.map((a) =>
-          a.id === art.id ? { ...a, status: 'Archived' as const } : a,
-        );
         await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({ tone: 'ok', text: `Archived "${art.enHeadline || art.title}" privately.` });
     } catch (err) {
@@ -134,11 +136,15 @@ export function AdminExpiredArchive({
         : formatPublishedDateLabel(now);
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
 
+      const updated = data.articles.map((a) =>
+        a.id === art.id ? { ...a, status: 'Published' as const, expiresAtMs: nextExpiry } : a,
+      );
       await saveEditorialArticle({
         articleId: art.id,
         isNew: false,
         previousStatus: art.status,
         expectedUpdatedAtMs: extractTimestampMillis(art.updatedAt),
+        knownArticles: updated,
         action: 'restore_article',
         payload: {
           ...cleanArt,
@@ -154,13 +160,10 @@ export function AdminExpiredArchive({
       });
 
       if (art.mediaId) {
-        const updated = data.articles.map((a) =>
-          a.id === art.id ? { ...a, status: 'Published' as const, expiresAtMs: nextExpiry } : a,
-        );
         await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
       }
 
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
@@ -179,16 +182,16 @@ export function AdminExpiredArchive({
     busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
-      await requestArticleDeletionApproval(art);
+      const updated = data.articles.map((a) =>
+        a.id === art.id
+          ? { ...a, status: 'Pending Deletion' as const, deletionStatus: 'pending_approval' as const }
+          : a,
+      );
+      await requestArticleDeletionApproval(art, updated);
       if (art.mediaId) {
-        const updated = data.articles.map((a) =>
-          a.id === art.id
-            ? { ...a, status: 'Pending Deletion' as const, deletionStatus: 'pending_approval' as const }
-            : a,
-        );
         await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
@@ -207,14 +210,14 @@ export function AdminExpiredArchive({
     busyIdsRef.current.add(art.id);
     setBusyId(art.id);
     try {
-      await approveArticleForPermanentDeletion(art);
+      const updated = data.articles.map((a) =>
+        a.id === art.id ? { ...a, status: 'Pending Deletion' as const, deletionStatus: 'approved' as const } : a,
+      );
+      await approveArticleForPermanentDeletion(art, updated);
       if (art.mediaId) {
-        const updated = data.articles.map((a) =>
-          a.id === art.id ? { ...a, status: 'Pending Deletion' as const, deletionStatus: 'approved' as const } : a,
-        );
         await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',

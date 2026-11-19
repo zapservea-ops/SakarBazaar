@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AUDIT_LOG_ALLOWED_ACTIONS,
   canDeleteArticleInFirestore,
   canDeleteIpoInFirestore,
   canDeleteIpoSourceReviewInFirestore,
@@ -22,8 +23,13 @@ import {
   hasOnlyAllowedArticleKeys,
   isPolicyAuthorizedUser,
   isPolicyOwner,
+  isValidArticleSchemaForRules,
+  isValidAuditLogPayloadForRules,
   isValidFirestoreDocId,
+  isValidIpoSchemaForRules,
   isValidMediaPayloadSize,
+  MEDIA_ASSET_ALLOWED_KEYS,
+  MEDIA_PAYLOAD_ALLOWED_KEYS,
   type PolicyAuthContext,
 } from './firestoreRulesPolicy.ts';
 import { classifyIpoDeletionEligibility } from './ipoLifecycle.ts';
@@ -446,6 +452,201 @@ test('Firestore Rules Policy — Truth-Table Parity Across Every IPO verificatio
   assert.ok(eligibleCombinations > 0);
   assert.ok(approvalBlockedCombinations > 0);
 });
+
+test('Firestore Rules Policy — IPO Draft Schema Parity, Media Key Allowlists & Audit Log Action Validation', () => {
+  // Draft & Awaiting Verification manual IPO payloads must pass isValidIpoSchemaForRules cleanly
+  const validDraftIpo = {
+    migrationKey: 'sakarbazaar-demo-tech-mainboard',
+    companyName: 'Test Draft Issuer Limited',
+    slug: 'test-draft-issuer-limited',
+    segment: 'Mainboard',
+    status: 'Draft',
+    verificationStatus: 'awaiting_verification',
+    isArchived: false,
+    deletionStatus: 'none',
+    updatedByUid: 'owner-1',
+    createdAt: {},
+    updatedAt: {},
+  };
+  assert.equal(isValidIpoSchemaForRules(validDraftIpo).valid, true);
+  assert.equal(canPublicOrUserGetIpo(ANON, 'ipo_test_draft', validDraftIpo), false);
+
+  const validAwaitingIpo = { ...validDraftIpo, status: 'Awaiting Verification' };
+  assert.equal(isValidIpoSchemaForRules(validAwaitingIpo).valid, true);
+  assert.equal(canPublicOrUserGetIpo(ANON, 'ipo_test_await', validAwaitingIpo), false);
+
+  // Verified IPO with non-public status or archived flag must fail rules invariants
+  assert.equal(
+    isValidIpoSchemaForRules({
+      ...validDraftIpo,
+      verificationStatus: 'verified',
+      status: 'Draft',
+    }).valid,
+    false,
+  );
+  assert.equal(
+    isValidIpoSchemaForRules({
+      ...validDraftIpo,
+      verificationStatus: 'verified',
+      status: 'Upcoming',
+      isArchived: true,
+    }).valid,
+    false,
+  );
+  assert.equal(
+    isValidIpoSchemaForRules({
+      ...validDraftIpo,
+      verificationStatus: 'verified',
+      status: 'Upcoming',
+      isArchived: false,
+      deletionStatus: 'none',
+    }).valid,
+    true,
+  );
+
+  // Ghost fields are rejected
+  assert.equal(
+    isValidIpoSchemaForRules({ ...validDraftIpo, id: 'ipo_test_draft' }).valid,
+    false,
+  );
+
+  // Media and MediaPayload key sets align cleanly with firestore.rules
+  assert.equal(MEDIA_ASSET_ALLOWED_KEYS.has('associatedArticleIds'), true);
+  assert.equal(MEDIA_ASSET_ALLOWED_KEYS.has('expiresAt'), true);
+  assert.equal(MEDIA_ASSET_ALLOWED_KEYS.has('id'), false);
+  assert.equal(MEDIA_PAYLOAD_ALLOWED_KEYS.has('dataUrl'), true);
+  assert.equal(MEDIA_PAYLOAD_ALLOWED_KEYS.has('uploadedByUid'), true);
+  assert.equal(MEDIA_PAYLOAD_ALLOWED_KEYS.has('id'), false);
+
+  // Audit log validation catches missing fields or disallowed actions
+  assert.equal(AUDIT_LOG_ALLOWED_ACTIONS.has('approve_delete'), true);
+  assert.equal(AUDIT_LOG_ALLOWED_ACTIONS.has('media_upload'), true);
+  assert.equal(
+    isValidAuditLogPayloadForRules({
+      action: 'approve_delete',
+      entityType: 'article',
+      entityId: 'art-1',
+      actorUid: 'owner-1',
+      actorEmail: 'jeetsheetalpuri@gmail.com',
+      previousStatus: 'Pending Deletion',
+      nextStatus: 'Pending Deletion',
+      summary: 'Approved permanent deletion for "art-1"',
+      createdAt: {},
+    }).valid,
+    true,
+  );
+  assert.equal(
+    isValidAuditLogPayloadForRules({
+      action: 'invented_action',
+      entityType: 'article',
+      entityId: 'art-1',
+      actorUid: 'owner-1',
+      actorEmail: 'jeetsheetalpuri@gmail.com',
+      nextStatus: 'Pending Deletion',
+      summary: 'Bad action test',
+      createdAt: {},
+    }).valid,
+    false,
+  );
+});
+
+test('Firestore Rules Policy — Problem A & B: Rejected/Proposed IPO Schema, Article Null-Field Tolerance & Deletion Approval Parity', () => {
+  // 1. Rejected & Proposed IPO states validate cleanly & reject verified mismatch
+  const baseIpo = {
+    migrationKey: 'sakarbazaar-rejected-issuer-mainboard',
+    companyName: 'Rejected Review Issuer Limited',
+    slug: 'rejected-review-issuer-limited',
+    segment: 'Mainboard',
+    status: 'Rejected',
+    verificationStatus: 'rejected',
+    previousVerificationStatus: 'awaiting_verification',
+    isArchived: false,
+    deletionStatus: 'none',
+    updatedByUid: 'owner-1',
+    createdAt: {},
+    updatedAt: {},
+  };
+  assert.equal(isValidIpoSchemaForRules(baseIpo).valid, true);
+  assert.equal(canPublicOrUserGetIpo(ANON, 'ipo_rej_1', baseIpo), false);
+  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo_rej_1', baseIpo), true);
+  assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo_rej_1', baseIpo), true);
+
+  assert.equal(
+    isValidIpoSchemaForRules({
+      ...baseIpo,
+      status: 'Awaiting Verification',
+      verificationStatus: 'proposed',
+    }).valid,
+    true,
+  );
+
+  // Rejected status paired with verified must fail public invariant
+  assert.equal(
+    isValidIpoSchemaForRules({
+      ...baseIpo,
+      verificationStatus: 'verified',
+    }).valid,
+    false,
+  );
+
+  // 2. Legacy article document with optional null fields + approveArticleForPermanentDeletion payload
+  const legacyArticleWithNulls = {
+    slug: 'india-new-zealand-fta-unlocked',
+    category: 'Markets',
+    author: 'SakarBazaar Desk',
+    status: 'Pending Deletion',
+    verificationStatus: 'verified',
+    language: 'bilingual',
+    youtubeUrl: null,
+    expiresAtMs: null,
+    expiresAt: null,
+    deletionStatus: 'pending_approval',
+    deletionApprovedByUid: null,
+    deletionApprovedByEmail: null,
+    deletionApprovedAtMs: null,
+    createdByUid: 'owner-1',
+    updatedByUid: 'owner-1',
+    createdAt: {},
+    updatedAt: {},
+  };
+  assert.equal(isValidArticleSchemaForRules(legacyArticleWithNulls).valid, true);
+
+  // Exact payload written by approveArticleForPermanentDeletion
+  const approvedPayload = {
+    ...legacyArticleWithNulls,
+    status: 'Pending Deletion',
+    deletionStatus: 'approved',
+    deletionApprovedByUid: 'owner-1',
+    deletionApprovedByEmail: 'jeetsheetalpuri@gmail.com',
+    deletionApprovedAtMs: NOW,
+    deletionError: '',
+    updatedByUid: 'owner-1',
+    updatedAt: {},
+  };
+  assert.equal(isValidArticleSchemaForRules(approvedPayload).valid, true);
+  assert.equal(hasOnlyAllowedArticleKeys(approvedPayload), true);
+
+  // Exact payload written by cancelArticleDeletionApproval
+  const cancelledPayload = {
+    ...approvedPayload,
+    status: 'Retained',
+    retainedPrivate: true,
+    deletionStatus: 'none',
+    deletionError: '',
+    updatedByUid: 'owner-1',
+    updatedAt: {},
+  };
+  assert.equal(isValidArticleSchemaForRules(cancelledPayload).valid, true);
+  assert.equal(hasOnlyAllowedArticleKeys(cancelledPayload), true);
+
+  // Approval gate parity: pending_approval cannot delete, approved CAN execute delete in separate step
+  assert.equal(canDeleteArticleInFirestore(OWNER, 'art-nz-fta', legacyArticleWithNulls), false);
+  assert.equal(canDeleteArticleInFirestore(OWNER, 'art-nz-fta', approvedPayload), true);
+  assert.equal(canDeleteArticleInFirestore(PUBLISHER, 'art-nz-fta', approvedPayload), true);
+  assert.equal(canDeleteArticleInFirestore(OWNER, 'art-nz-fta', cancelledPayload), false);
+});
+
+
 
 
 

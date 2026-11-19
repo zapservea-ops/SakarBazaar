@@ -159,11 +159,17 @@ export function AdminManageNews({
       const preservedPubLabel =
         art.publishedAt || formatPublishedDateLabel(preservedPubMs);
 
+      const nextArticles = getUpdatedArticlesSnapshot(art.id, {
+        ...art,
+        status: 'Published',
+        expiresAtMs: nextExpiry,
+      });
       await saveEditorialArticle({
         articleId: art.id,
         isNew,
         previousStatus: art.status,
         expectedUpdatedAtMs,
+        knownArticles: nextArticles,
         action: 'extend_duration',
         payload: {
           ...cleanArt,
@@ -178,14 +184,9 @@ export function AdminManageNews({
         },
       });
       if (art.mediaId) {
-        const updated = getUpdatedArticlesSnapshot(art.id, {
-          ...art,
-          status: 'Published',
-          expiresAtMs: nextExpiry,
-        });
-        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+        await syncMediaVisibilityAcrossArticles(art.mediaId, nextArticles);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
@@ -216,11 +217,17 @@ export function AdminManageNews({
       const { isNew, expectedUpdatedAtMs } = resolveSaveMeta(item);
       const isPrivate = targetStatus === 'Retained' || targetStatus === 'Archived';
 
+      const nextArticles = getUpdatedArticlesSnapshot(art.id, {
+        ...art,
+        status: targetStatus,
+        retainedPrivate: isPrivate,
+      });
       await saveEditorialArticle({
         articleId: art.id,
         isNew,
         previousStatus: art.status,
         expectedUpdatedAtMs,
+        knownArticles: nextArticles,
         action: actionName,
         payload: {
           ...cleanArt,
@@ -231,15 +238,10 @@ export function AdminManageNews({
       });
 
       if (art.mediaId) {
-        const updated = getUpdatedArticlesSnapshot(art.id, {
-          ...art,
-          status: targetStatus,
-          retainedPrivate: isPrivate,
-        });
-        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+        await syncMediaVisibilityAcrossArticles(art.mediaId, nextArticles);
       }
 
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       const label =
         targetStatus === 'Draft'
@@ -285,11 +287,17 @@ export function AdminManageNews({
       const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
       const { isNew, expectedUpdatedAtMs } = resolveSaveMeta(item);
 
+      const nextArticles = getUpdatedArticlesSnapshot(art.id, {
+        ...art,
+        status: 'Published',
+        expiresAtMs: nextExpiry,
+      });
       await saveEditorialArticle({
         articleId: art.id,
         isNew,
         previousStatus: art.status,
         expectedUpdatedAtMs,
+        knownArticles: nextArticles,
         action: 'restore_article',
         payload: {
           ...cleanArt,
@@ -307,15 +315,10 @@ export function AdminManageNews({
       });
 
       if (art.mediaId) {
-        const updated = getUpdatedArticlesSnapshot(art.id, {
-          ...art,
-          status: 'Published',
-          expiresAtMs: nextExpiry,
-        });
-        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+        await syncMediaVisibilityAcrossArticles(art.mediaId, nextArticles);
       }
 
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
@@ -339,12 +342,18 @@ export function AdminManageNews({
     setBusyId(art.id);
     try {
       const existsInFirestore = data.articles.some((a) => a.id === art.id);
+      const updatedForDelete = getUpdatedArticlesSnapshot(art.id, {
+        ...art,
+        status: 'Pending Deletion',
+        deletionStatus: 'pending_approval',
+      });
       if (!existsInFirestore) {
         const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
         await saveEditorialArticle({
           articleId: art.id,
           isNew: true,
           previousStatus: art.status,
+          knownArticles: updatedForDelete,
           action: 'retain_private',
           payload: {
             ...cleanArt,
@@ -355,16 +364,11 @@ export function AdminManageNews({
         });
       }
 
-      await requestArticleDeletionApproval(art);
+      await requestArticleDeletionApproval(art, updatedForDelete);
       if (art.mediaId) {
-        const updated = getUpdatedArticlesSnapshot(art.id, {
-          ...art,
-          status: 'Pending Deletion',
-          deletionStatus: 'pending_approval',
-        });
-        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+        await syncMediaVisibilityAcrossArticles(art.mediaId, updatedForDelete);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
@@ -388,6 +392,11 @@ export function AdminManageNews({
     setBusyId(art.id);
     try {
       const existsInFirestore = data.articles.some((a) => a.id === art.id);
+      const updatedForApprove = getUpdatedArticlesSnapshot(art.id, {
+        ...art,
+        status: 'Pending Deletion',
+        deletionStatus: 'approved',
+      });
       if (!existsInFirestore) {
         // Persist static record into Firestore first so Pending Deletion workflow (Section 8) can track and suppress it cleanly
         const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
@@ -395,6 +404,7 @@ export function AdminManageNews({
           articleId: art.id,
           isNew: true,
           previousStatus: art.status,
+          knownArticles: updatedForApprove,
           action: 'retain_private',
           payload: {
             ...cleanArt,
@@ -405,16 +415,11 @@ export function AdminManageNews({
         });
       }
 
-      await approveArticleForPermanentDeletion(art);
+      await approveArticleForPermanentDeletion(art, updatedForApprove);
       if (art.mediaId) {
-        const updated = getUpdatedArticlesSnapshot(art.id, {
-          ...art,
-          status: 'Pending Deletion',
-          deletionStatus: 'approved',
-        });
-        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+        await syncMediaVisibilityAcrossArticles(art.mediaId, updatedForApprove);
       }
-      await onRefresh();
+      await onRefresh({ scope: art.mediaId ? 'media' : 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
@@ -451,7 +456,7 @@ export function AdminManageNews({
       });
       setMigrationPreview(null);
       setMigrationReport(report);
-      await onRefresh();
+      await onRefresh({ scope: 'media' });
       await onPublicContentChanged();
       onNotify({
         tone: report.errors.length > 0 ? 'err' : 'ok',

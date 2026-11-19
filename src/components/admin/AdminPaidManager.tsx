@@ -89,7 +89,7 @@ export function AdminPaidManager({ data, onRefresh, onNotify }: AdminSectionBase
         !editingId,
         editingId ? editingUpdatedAtMsRef.current : null,
       );
-      await onRefresh();
+      await onRefresh({ scope: 'paid' });
       resetForm();
       onNotify({ tone: 'ok', text: `Saved private paid campaign for ${clientName.trim()}.` });
     } catch (err) {

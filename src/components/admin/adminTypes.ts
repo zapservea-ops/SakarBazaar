@@ -47,13 +47,20 @@ export interface AdminWorkspaceData {
   systemSettings: SystemSettingsRecord;
 }
 
+export type AdminRefreshScope = 'all' | 'non_realtime' | 'media' | 'paid' | 'settings' | 'none';
+
+export interface AdminRefreshOptions {
+  manual?: boolean;
+  scope?: AdminRefreshScope;
+}
+
 export interface AdminSectionBaseProps {
   data: AdminWorkspaceData;
   adminRole: AdminRole;
   permissions: AdminPermissionMatrix;
   userUid: string;
   userEmail: string;
-  onRefresh: () => Promise<void>;
+  onRefresh: (opts?: AdminRefreshOptions) => Promise<void>;
   onNavigate: (section: AdminSectionKey) => void;
   onNotify: (msg: { text: string; tone: 'ok' | 'err' }) => void;
 }

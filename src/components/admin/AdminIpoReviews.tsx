@@ -43,7 +43,7 @@ export function AdminIpoReviews({
       setPortals(report.portals);
       setPolicyNote(report.policyNote || null);
 
-      await onRefresh();
+      await onRefresh({ scope: 'none' });
       const sebiPortal = report.portals[0];
       if (sebiPortal && sebiPortal.status !== 'reachable') {
         onNotify({
@@ -80,7 +80,7 @@ export function AdminIpoReviews({
         decision,
         existingIpos: data.ipos,
       });
-      await onRefresh();
+      await onRefresh({ scope: 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',

@@ -34,7 +34,7 @@ export function AdminFeaturedManager({
     try {
       const changes = applyManualFeaturedPlacement(data.articles, articleId, placement, order);
       await updateFeaturedPlacementsInFirestore(changes);
-      await onRefresh();
+      await onRefresh({ scope: 'none' });
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',

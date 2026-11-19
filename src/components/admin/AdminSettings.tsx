@@ -119,7 +119,7 @@ export function AdminSettings({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      await onRefresh();
+      await onRefresh({ scope: 'none' });
       onNotify({
         tone: 'ok',
         text: `Downloaded full backup JSON (${bundle.counts.articles} articles, ${bundle.counts.mediaPayloads} photo payloads, ${bundle.counts.ipos} IPOs).`,
@@ -176,7 +176,7 @@ export function AdminSettings({
       setRestoreReport(report);
       setPendingRestoreBundle(null);
       setValidationReport(null);
-      await onRefresh();
+      await onRefresh({ scope: 'all' });
       await onPublicContentChanged();
       const totalRestored =
         report.restoredByCollection.articles +
@@ -233,7 +233,7 @@ export function AdminSettings({
       }
       setNewEmail('');
       setNewDisplayName('');
-      await onRefresh();
+      await onRefresh({ scope: 'settings' });
       onNotify({ tone: 'ok', text: `Authorized ${newRole} Google account: ${emailLower}` });
     } catch (err) {
       onNotify({
@@ -257,7 +257,7 @@ export function AdminSettings({
         maxImageSizeBytes: Math.max(40_000, Math.min(400_000, Number(maxImgBytes) || 180_000)),
         requireBilingualPublish: true,
       });
-      await onRefresh();
+      await onRefresh({ scope: 'settings' });
       onNotify({ tone: 'ok', text: 'Saved global newsroom defaults.' });
     } catch (err) {
       onNotify({
@@ -282,7 +282,7 @@ export function AdminSettings({
         active: !item.active,
         isNew: false,
       });
-      await onRefresh();
+      await onRefresh({ scope: 'settings' });
       onNotify({
         tone: 'ok',
         text: `${item.active ? 'Disabled access for' : 'Re-enabled'} ${item.email}.`,
@@ -316,7 +316,7 @@ export function AdminSettings({
           isNew: false,
         });
       }
-      await onRefresh();
+      await onRefresh({ scope: 'settings' });
       onNotify({ tone: 'ok', text: `Changed ${usr.email} role to ${nextRole}.` });
     } catch (err) {
       onNotify({

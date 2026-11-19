@@ -503,6 +503,15 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
 
   async function signInEditor() {
     const loggedIn = await signInWithGoogle();
+    try {
+      await loggedIn.reload();
+    } catch {
+      // Proceed to token check
+    }
+    if (!loggedIn.emailVerified) {
+      throw new Error('Your Google account email is not verified. Verify your email with Google before signing in.');
+    }
+    await loggedIn.getIdToken(true);
     const authStatus = await checkEditorAuthorization(loggedIn);
     setUser(loggedIn);
     setIsAuthorizedEditor(authStatus.authorized);

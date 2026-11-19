@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { MEDIA_ASSETS } from '../../data/editorialData';
+import { ARTICLES_CATALOG } from '../../data/sampleData';
 import {
+  deleteMediaAssetSafely,
   saveCompressedPhotoAsset,
   saveEditorialArticle,
   saveYouTubeMediaAsset,
@@ -20,6 +22,7 @@ import {
 } from '../../utils/historicalNews';
 import {
   compressImageFileInBrowser,
+  evaluateReplacedMediaCleanup,
   parseYouTubeVideoUrl,
 } from '../../utils/mediaLibrary';
 import {
@@ -31,8 +34,8 @@ import {
   isDeletionQueueEditLocked,
   resolveDurationHours,
   sanitizeArticleSlug,
-  validateArticleDraftInput,
-  validateArticlePublishInput,
+  validateNewsComposerInput,
+  type NewsComposerValidationFields,
 } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
@@ -114,12 +117,20 @@ export function AdminNewsDesk({
   const [confirmPublishOpen, setConfirmPublishOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<NewsComposerValidationFields | null>(null);
 
   // Synchronous submit + idempotency + optimistic version guards
   const savingRef = useRef(false);
   const pendingArticleIdRef = useRef<string | null>(null);
+  const articleCommittedInSessionRef = useRef<string | null>(null);
   const editingUpdatedAtMsRef = useRef<number | null>(null);
+  const activeMediaIdRef = useRef<string | undefined>(editingArticle?.mediaId);
   const uploadedPhotoRef = useRef<{ signature: string; mediaId: string } | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaCreditInputRef = useRef<HTMLInputElement | null>(null);
+  const usageRightsCheckboxRef = useRef<HTMLInputElement | null>(null);
+  const youtubeInputRef = useRef<HTMLInputElement | null>(null);
+  const existingMediaSelectRef = useRef<HTMLSelectElement | null>(null);
 
   const reusableMediaOptions = useMemo(() => {
     const seen = new Set(data.media.map((m) => m.id));
@@ -145,7 +156,9 @@ export function AdminNewsDesk({
   useEffect(() => {
     if (!editingArticle) return;
     pendingArticleIdRef.current = editingArticle.id;
+    articleCommittedInSessionRef.current = null;
     editingUpdatedAtMsRef.current = extractTimestampMillis(editingArticle.updatedAt);
+    activeMediaIdRef.current = editingArticle.mediaId;
     uploadedPhotoRef.current = null;
     setCategory(editingArticle.category);
     setAuthor(editingArticle.author || 'SakarBazaar Editorial Desk');
@@ -194,12 +207,15 @@ export function AdminNewsDesk({
       setYoutubeTitle('');
     }
     setLocalError(null);
+    setFieldErrors(null);
   }, [editingArticle]);
 
   function resetComposer() {
     onClearEditing();
     pendingArticleIdRef.current = null;
+    articleCommittedInSessionRef.current = null;
     editingUpdatedAtMsRef.current = null;
+    activeMediaIdRef.current = undefined;
     uploadedPhotoRef.current = null;
     setCategory('Markets');
     setAuthor('SakarBazaar Editorial Desk');
@@ -230,12 +246,14 @@ export function AdminNewsDesk({
     setYoutubeInput('');
     setYoutubeTitle('');
     setLocalError(null);
+    setFieldErrors(null);
   }
 
   async function handlePhotoFileSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setLocalError(null);
+    setFieldErrors((prev) => (prev ? { ...prev, photoFile: false } : prev));
     setCompressing(true);
     setPhotoOriginalBytes(file.size);
     try {
@@ -248,7 +266,7 @@ export function AdminNewsDesk({
       setPhotoWidth(compressed.width);
       setPhotoHeight(compressed.height);
       setPhotoSizeBytes(compressed.sizeBytes);
-      setPhotoFileName(file.name.replace(/\.[^.]+$/, '') + '.jpg');
+      setPhotoFileName(`${file.name.replace(/\.[^.]+$/, '').slice(0, 180) || 'photo'}.jpg`);
       setMediaMode('photo');
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Unable to compress photograph.');
@@ -257,53 +275,56 @@ export function AdminNewsDesk({
     }
   }
 
-  function validateBeforeAction(targetMode: 'draft' | 'minor_edit' | 'publish'): string | null {
-    if (author.trim().length < 2 || author.trim().length > 120) {
-      return 'Author / Byline must be between 2 and 120 characters.';
-    }
-    if (targetMode === 'publish') {
-      const publishCheck = validateArticlePublishInput({
-        enHeadline,
-        enSummary,
-        enBody,
-        hiHeadline,
-        hiSummary,
-        hiBody,
-        sourceName,
-        sourceUrl,
-        durationPreset,
-        customHours,
-      });
-      if (!publishCheck.valid) {
-        return publishCheck.errors.join(' ');
-      }
-    } else {
-      const draftCheck = validateArticleDraftInput({
-        enHeadline,
-        enSummary,
-        enBody,
-        hiHeadline,
-        hiSummary,
-        hiBody,
-        sourceName,
-        sourceUrl,
-        durationPreset,
-        customHours,
-      });
-      if (!draftCheck.valid) {
-        return draftCheck.errors.join(' ');
+  function focusInvalidField(fields: NewsComposerValidationFields) {
+    const targetEl: HTMLElement | null = fields.photoFile
+      ? photoInputRef.current
+      : fields.mediaCredit
+        ? mediaCreditInputRef.current
+        : fields.usageRightsConfirmed
+          ? usageRightsCheckboxRef.current
+          : fields.youtubeUrl
+            ? youtubeInputRef.current
+            : fields.existingMedia
+              ? existingMediaSelectRef.current
+              : null;
+    if (targetEl) {
+      try {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetEl.focus({ preventScroll: true });
+      } catch {
+        // Ignore in headless/non-DOM environments
       }
     }
+  }
 
-    if (mediaMode === 'photo' && photoDataUrl && (!mediaCredit.trim() || !usageRightsConfirmed)) {
-      return 'Please enter photographer/source credit and confirm usage rights before saving an uploaded photograph.';
+  function validateBeforeAction(targetMode: 'draft' | 'minor_edit' | 'publish'): string | null {
+    const check = validateNewsComposerInput({
+      author,
+      enHeadline,
+      enSummary,
+      enBody,
+      hiHeadline,
+      hiSummary,
+      hiBody,
+      sourceName,
+      sourceUrl,
+      durationPreset,
+      customHours,
+      targetMode,
+      mediaMode,
+      photoDataUrl,
+      mediaCredit,
+      usageRightsConfirmed,
+      youtubeInput,
+      hasValidYouTube: Boolean(parsedYouTube),
+      selectedExistingMediaId,
+    });
+    if (!check.valid) {
+      setFieldErrors(check.fields);
+      focusInvalidField(check.fields);
+      return check.message;
     }
-    if (mediaMode === 'youtube' && youtubeInput.trim() && !parsedYouTube) {
-      return 'Enter a valid YouTube video URL or 11-character YouTube video ID.';
-    }
-    if (mediaMode === 'existing' && !selectedExistingMediaId) {
-      return 'Select an existing asset from the Media Library or switch media mode to No Media.';
-    }
+    setFieldErrors(null);
     return null;
   }
 
@@ -323,6 +344,7 @@ export function AdminNewsDesk({
     const validationError = validateBeforeAction(targetMode);
     if (validationError) {
       setLocalError(validationError);
+      onNotify({ tone: 'err', text: validationError });
       return;
     }
 
@@ -336,7 +358,9 @@ export function AdminNewsDesk({
       }
       const articleId = pendingArticleIdRef.current;
       // Check authoritative Firestore presence (an unmigrated static article has editingArticle set, but !existsInFirestore)
-      const existsInFirestore = data.articles.some((a) => a.id === articleId);
+      const existsInFirestore =
+        data.articles.some((a) => a.id === articleId) ||
+        articleCommittedInSessionRef.current === articleId;
       const isNew = !existsInFirestore;
       const slug = editingArticle?.slug
         ? sanitizeArticleSlug(editingArticle.slug, 'dispatch')
@@ -384,6 +408,9 @@ export function AdminNewsDesk({
         expiresAtMs = preserved.expiresAtMs ?? null;
         finalPreset = preserved.durationPreset || durationPreset;
         finalHours = preserved.durationHours || resolvedHours;
+        if (nextStatus === 'Published' && expiresAtMs === null) {
+          expiresAtMs = computeExpiresAtMs(nowMs, finalHours);
+        }
       } else {
         nextStatus = 'Draft';
         nextRetainedPrivate = false;
@@ -426,6 +453,9 @@ export function AdminNewsDesk({
           expiresAtMs,
           associatedArticleIds: [articleId],
           isUpdate: Boolean(alreadyUploaded),
+          onAssetCommitted: (safeMediaId) => {
+            uploadedPhotoRef.current = { signature: photoSig, mediaId: safeMediaId };
+          },
         });
         uploadedPhotoRef.current = { signature: photoSig, mediaId: targetMediaId };
         finalMediaId = targetMediaId;
@@ -450,12 +480,33 @@ export function AdminNewsDesk({
 
       const cleanEnSummary = (enSummary.trim() || enBody.trim().slice(0, 200)).slice(0, 1200);
       const cleanHiSummary = (hiSummary.trim() || hiBody.trim().slice(0, 200)).slice(0, 1200);
+      const previousMediaId = activeMediaIdRef.current ?? editingArticle?.mediaId;
+      const virtualUpdated = data.articles.some((a) => a.id === articleId)
+        ? data.articles.map((a) =>
+            a.id === articleId
+              ? { ...a, mediaId: finalMediaId || '', status: nextStatus, expiresAtMs }
+              : a,
+          )
+        : [
+            ...data.articles,
+            {
+              id: articleId,
+              mediaId: finalMediaId || '',
+              status: nextStatus,
+              expiresAtMs,
+            } as StoredArticleDoc,
+          ];
 
       await saveEditorialArticle({
         articleId,
         isNew,
         previousStatus: editingArticle?.status,
         expectedUpdatedAtMs: isNew ? null : editingUpdatedAtMsRef.current,
+        knownArticles: virtualUpdated,
+        onArticleCommitted: (safeId) => {
+          articleCommittedInSessionRef.current = safeId;
+          editingUpdatedAtMsRef.current = Date.now() + 2_000;
+        },
         action:
           targetMode === 'publish'
             ? 'publish'
@@ -510,32 +561,30 @@ export function AdminNewsDesk({
         },
       });
 
-      const previousMediaId = editingArticle?.mediaId;
-      const virtualUpdated = data.articles.some((a) => a.id === articleId)
-        ? data.articles.map((a) =>
-            a.id === articleId
-              ? { ...a, mediaId: finalMediaId || '', status: nextStatus, expiresAtMs }
-              : a,
-          )
-        : [
-            ...data.articles,
-            {
-              id: articleId,
-              mediaId: finalMediaId || '',
-              status: nextStatus,
-              expiresAtMs,
-            } as StoredArticleDoc,
-          ];
-
       if (finalMediaId) {
         await syncMediaVisibilityAcrossArticles(finalMediaId, virtualUpdated);
       }
       if (previousMediaId && previousMediaId !== finalMediaId) {
         await syncMediaVisibilityAcrossArticles(previousMediaId, virtualUpdated);
+        const prevCleanup = evaluateReplacedMediaCleanup({
+          previousMediaId,
+          nextMediaId: finalMediaId,
+          allArticles: virtualUpdated,
+          staticArticles: ARTICLES_CATALOG,
+          staticMediaAssets: MEDIA_ASSETS,
+        });
+        if (prevCleanup.shouldDeletePrevious) {
+          await deleteMediaAssetSafely(previousMediaId, virtualUpdated).catch(() => undefined);
+        }
       }
 
+      activeMediaIdRef.current = finalMediaId;
       setConfirmPublishOpen(false);
-      await onRefresh();
+      const mediaTouched =
+        mediaMode === 'photo' ||
+        mediaMode === 'youtube' ||
+        Boolean(previousMediaId && previousMediaId !== finalMediaId);
+      await onRefresh({ scope: mediaTouched ? 'media' : 'none' });
       await onPublicContentChanged();
 
       onNotify({
@@ -550,7 +599,7 @@ export function AdminNewsDesk({
       if (targetMode === 'publish') {
         resetComposer();
       } else {
-        // Advance our local baseline so consecutive draft saves from this session succeed cleanly
+        // Advance our local baseline so consecutive draft/minor saves from this session succeed cleanly
         editingUpdatedAtMsRef.current = Date.now() + 2_000;
       }
     } catch (err) {
@@ -853,28 +902,48 @@ export function AdminNewsDesk({
             <button
               type="button"
               className={`sb-filter-tab${mediaMode === 'none' ? ' active' : ''}`}
-              onClick={() => setMediaMode('none')}
+              onClick={() => {
+                setMediaMode('none');
+                setFieldErrors((prev) =>
+                  prev
+                    ? { ...prev, photoFile: false, mediaCredit: false, usageRightsConfirmed: false, youtubeUrl: false, existingMedia: false }
+                    : prev,
+                );
+              }}
             >
               No Media
             </button>
             <button
               type="button"
               className={`sb-filter-tab${mediaMode === 'photo' ? ' active' : ''}`}
-              onClick={() => setMediaMode('photo')}
+              onClick={() => {
+                setMediaMode('photo');
+                setFieldErrors((prev) => (prev ? { ...prev, youtubeUrl: false, existingMedia: false } : prev));
+              }}
             >
               Upload Photograph
             </button>
             <button
               type="button"
               className={`sb-filter-tab${mediaMode === 'youtube' ? ' active' : ''}`}
-              onClick={() => setMediaMode('youtube')}
+              onClick={() => {
+                setMediaMode('youtube');
+                setFieldErrors((prev) =>
+                  prev ? { ...prev, photoFile: false, mediaCredit: false, usageRightsConfirmed: false, existingMedia: false } : prev,
+                );
+              }}
             >
               Link YouTube Video
             </button>
             <button
               type="button"
               className={`sb-filter-tab${mediaMode === 'existing' ? ' active' : ''}`}
-              onClick={() => setMediaMode('existing')}
+              onClick={() => {
+                setMediaMode('existing');
+                setFieldErrors((prev) =>
+                  prev ? { ...prev, photoFile: false, mediaCredit: false, usageRightsConfirmed: false, youtubeUrl: false } : prev,
+                );
+              }}
             >
               Reuse Media Library ({reusableMediaOptions.length})
             </button>
@@ -885,10 +954,18 @@ export function AdminNewsDesk({
               <label className="sb-form-field">
                 <span>Select Photograph (compressed automatically in browser to ~150–180 KB)</span>
                 <input
+                  ref={photoInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
+                  aria-invalid={Boolean(fieldErrors?.photoFile)}
+                  style={fieldErrors?.photoFile ? { borderColor: 'var(--down)' } : undefined}
                   onChange={(e) => void handlePhotoFileSelect(e)}
                 />
+                {fieldErrors?.photoFile && (
+                  <span className="meta" style={{ color: 'var(--down)', fontWeight: 600 }}>
+                    Select a photograph file first or switch media mode.
+                  </span>
+                )}
               </label>
               {compressing && <div className="meta">Compressing image in browser…</div>}
               {photoDataUrl && (
@@ -905,23 +982,60 @@ export function AdminNewsDesk({
                 <label className="sb-form-field">
                   <span>Photographer / Source Credit (Required for upload)</span>
                   <input
+                    ref={mediaCreditInputRef}
                     type="text"
                     value={mediaCredit}
-                    onChange={(e) => setMediaCredit(e.target.value)}
+                    aria-invalid={Boolean(fieldErrors?.mediaCredit)}
+                    style={fieldErrors?.mediaCredit ? { borderColor: 'var(--down)' } : undefined}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setMediaCredit(val);
+                      if (val.trim()) {
+                        setFieldErrors((prev) => (prev ? { ...prev, mediaCredit: false } : prev));
+                      }
+                    }}
                     placeholder="e.g. Press Information Bureau / SakarBazaar"
                   />
+                  {fieldErrors?.mediaCredit && (
+                    <span className="meta" style={{ color: 'var(--down)', fontWeight: 600 }}>
+                      Required: enter photographer or source credit.
+                    </span>
+                  )}
                 </label>
-                <label
-                  className="sb-form-field"
-                  style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', paddingTop: '22px' }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={usageRightsConfirmed}
-                    onChange={(e) => setUsageRightsConfirmed(e.target.checked)}
-                  />
-                  <span>I confirm legal usage rights for this photograph</span>
-                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingTop: '22px' }}>
+                  <label
+                    className="sb-form-field"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: fieldErrors?.usageRightsConfirmed ? '6px 8px' : undefined,
+                      borderRadius: fieldErrors?.usageRightsConfirmed ? '8px' : undefined,
+                      border: fieldErrors?.usageRightsConfirmed ? '1px solid var(--down)' : undefined,
+                    }}
+                  >
+                    <input
+                      ref={usageRightsCheckboxRef}
+                      type="checkbox"
+                      checked={usageRightsConfirmed}
+                      aria-invalid={Boolean(fieldErrors?.usageRightsConfirmed)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setUsageRightsConfirmed(checked);
+                        if (checked) {
+                          setFieldErrors((prev) => (prev ? { ...prev, usageRightsConfirmed: false } : prev));
+                        }
+                      }}
+                    />
+                    <span>I confirm legal usage rights for this photograph</span>
+                  </label>
+                  {fieldErrors?.usageRightsConfirmed && (
+                    <span className="meta" style={{ color: 'var(--down)', fontWeight: 600 }}>
+                      Required: confirm legal usage rights to save or publish.
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -932,9 +1046,15 @@ export function AdminNewsDesk({
                 <label className="sb-form-field">
                   <span>YouTube Video URL or 11-char ID</span>
                   <input
+                    ref={youtubeInputRef}
                     type="text"
                     value={youtubeInput}
-                    onChange={(e) => setYoutubeInput(e.target.value)}
+                    aria-invalid={Boolean(fieldErrors?.youtubeUrl)}
+                    style={fieldErrors?.youtubeUrl ? { borderColor: 'var(--down)' } : undefined}
+                    onChange={(e) => {
+                      setYoutubeInput(e.target.value);
+                      setFieldErrors((prev) => (prev ? { ...prev, youtubeUrl: false } : prev));
+                    }}
                     placeholder="https://www.youtube.com/watch?v=... or youtu.be/..."
                   />
                 </label>
@@ -956,7 +1076,7 @@ export function AdminNewsDesk({
                     embed ready ({parsedYouTube.embedUrl})
                   </div>
                 </div>
-              ) : youtubeInput.trim() ? (
+              ) : youtubeInput.trim() || fieldErrors?.youtubeUrl ? (
                 <div className="meta" style={{ color: 'var(--down)' }}>
                   Enter a valid YouTube link (youtube.com/watch?v=..., youtu.be/..., or /shorts/...).
                 </div>
@@ -968,8 +1088,16 @@ export function AdminNewsDesk({
             <label className="sb-form-field">
               <span>Choose Existing Asset from Media Library</span>
               <select
+                ref={existingMediaSelectRef}
                 value={selectedExistingMediaId}
-                onChange={(e) => setSelectedExistingMediaId(e.target.value)}
+                aria-invalid={Boolean(fieldErrors?.existingMedia)}
+                style={fieldErrors?.existingMedia ? { borderColor: 'var(--down)' } : undefined}
+                onChange={(e) => {
+                  setSelectedExistingMediaId(e.target.value);
+                  if (e.target.value) {
+                    setFieldErrors((prev) => (prev ? { ...prev, existingMedia: false } : prev));
+                  }
+                }}
               >
                 <option value="">Select media asset…</option>
                 {reusableMediaOptions.map((opt) => (
@@ -978,9 +1106,20 @@ export function AdminNewsDesk({
                   </option>
                 ))}
               </select>
+              {fieldErrors?.existingMedia && (
+                <span className="meta" style={{ color: 'var(--down)', fontWeight: 600 }}>
+                  Select a media asset or choose No Media.
+                </span>
+              )}
             </label>
           )}
         </div>
+
+        {localError && (
+          <div className="sb-admin-alert err" role="alert" style={{ marginTop: '12px' }}>
+            {localError}
+          </div>
+        )}
 
         {/* Action buttons */}
         <div className="sb-admin-action-bar">
@@ -1018,6 +1157,7 @@ export function AdminNewsDesk({
               const validationError = validateBeforeAction('publish');
               if (validationError) {
                 setLocalError(validationError);
+                onNotify({ tone: 'err', text: validationError });
                 return;
               }
               setLocalError(null);
@@ -1108,6 +1248,16 @@ export function AdminNewsDesk({
             <div className="sb-note-box" style={{ marginBottom: '12px', fontSize: '13px' }}>
               <div><strong>EN:</strong> {enHeadline.trim()}</div>
               <div><strong>हिंदी:</strong> {hiHeadline.trim()}</div>
+              <div>
+                <strong>Media:</strong>{' '}
+                {mediaMode === 'photo' && photoDataUrl
+                  ? `Compressed photograph (${photoFileName || 'upload.jpg'}, ${Math.round(photoSizeBytes / 1024)} KB) · Credit: ${mediaCredit.trim()}`
+                  : mediaMode === 'youtube' && parsedYouTube
+                    ? `YouTube Video (${parsedYouTube.videoId})`
+                    : mediaMode === 'existing' && selectedExistingMediaId
+                      ? `Media Library asset (${selectedExistingMediaId})`
+                      : 'No media attached'}
+              </div>
               {(sourceName.trim() || sourceUrl.trim()) && (
                 <div>
                   <strong>Source:</strong> {sourceName.trim() || 'Specified link'}
