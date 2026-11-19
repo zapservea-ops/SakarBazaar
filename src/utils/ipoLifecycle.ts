@@ -1,4 +1,25 @@
-import type { IpoRow, IpoSourceDiffItem, ManagedIpoRecord } from '../types/sakarbazaar';
+import type {
+  IpoCatalogClassificationType,
+  IpoCatalogRecordClassification,
+  IpoConflictItem,
+  IpoConflictReport,
+  IpoIdentityMatchType,
+  IpoRow,
+  IpoSegment,
+  IpoSourceDiffItem,
+  IpoSourceReviewRecord,
+  ManagedIpoRecord,
+  StoredArticleDoc,
+  UnifiedIpoPreviewEntry,
+} from '../types/sakarbazaar';
+
+const GENERIC_PORTAL_URLS = new Set([
+  'https://www.sebi.gov.in',
+  'https://www.sebi.gov.in/',
+  'https://www.sebi.gov.in/sebiweb/home/homeaction.do?dolisting=yes&sid=3&ssid=15&smid=11',
+  'https://www.nseindia.com',
+  'https://www.bseindia.com',
+]);
 
 /**
  * Returns current date string YYYY-MM-DD in Asia/Kolkata (IST).
@@ -58,14 +79,35 @@ export function normalizeToIsoDate(raw: string | null | undefined): string | nul
 /**
  * Automatically calculates IPO lifecycle status using official opening/closing/listing dates in IST.
  * NEVER uses SEBI filing date as issue opening date.
+ * Preserves explicit Archive / Unpublish / Deletion lifecycle states cleanly.
  */
 export function calculateIpoStatusFromDates(params: {
   openingDate?: string | null;
   closingDate?: string | null;
   listingDate?: string | null;
-  verificationStatus?: 'awaiting_verification' | 'verified';
+  verificationStatus?: 'awaiting_verification' | 'verified' | 'unpublished' | 'archived';
+  currentStatus?: ManagedIpoRecord['status'];
+  isArchived?: boolean;
+  deletionStatus?: ManagedIpoRecord['deletionStatus'];
   todayIst?: string;
-}): 'Awaiting Verification' | 'Upcoming' | 'Open' | 'Closed' | 'Listed' {
+}): ManagedIpoRecord['status'] {
+  if (params.deletionStatus === 'deleted' || params.currentStatus === 'Deleted') {
+    return 'Deleted';
+  }
+  if (
+    params.deletionStatus === 'pending_approval' ||
+    params.deletionStatus === 'approved' ||
+    params.currentStatus === 'Pending Deletion'
+  ) {
+    return 'Pending Deletion';
+  }
+  if (params.isArchived || params.verificationStatus === 'archived' || params.currentStatus === 'Archived') {
+    return 'Archived';
+  }
+  if (params.verificationStatus === 'unpublished' || params.currentStatus === 'Unpublished') {
+    return 'Unpublished';
+  }
+
   const today = params.todayIst ?? getIstDateString();
   const openIso = normalizeToIsoDate(params.openingDate);
   const closeIso = normalizeToIsoDate(params.closingDate);
@@ -87,14 +129,36 @@ export function calculateIpoStatusFromDates(params: {
   return 'Upcoming';
 }
 
+export function isIpoPubliclyVisible(ipo: {
+  verificationStatus?: string;
+  status?: string;
+  isArchived?: boolean;
+  deletionStatus?: string;
+}): boolean {
+  if (ipo.verificationStatus !== 'verified') return false;
+  if (ipo.isArchived) return false;
+  if (
+    ipo.status === 'Archived' ||
+    ipo.status === 'Unpublished' ||
+    ipo.status === 'Pending Deletion' ||
+    ipo.status === 'Deleted'
+  ) {
+    return false;
+  }
+  if (ipo.deletionStatus && ipo.deletionStatus !== 'none') return false;
+  return true;
+}
+
 export function formatOfficialIpoField(value: string | null | undefined): string {
   const clean = (value ?? '').trim();
   return clean || 'Not announced';
 }
 
 export interface DetectedIpoCandidate {
+  id?: string;
+  migrationKey?: string;
   companyName: string;
-  segment: 'Mainboard' | 'SME';
+  segment: IpoSegment;
   issueSize?: string;
   priceBand?: string;
   lotSize?: string;
@@ -102,6 +166,7 @@ export interface DetectedIpoCandidate {
   openingDate?: string;
   closingDate?: string;
   listingDate?: string;
+  offerType?: string;
   documentType?: string;
   documentUrl?: string;
   officialDocuments?: string[];
@@ -118,10 +183,279 @@ export function normalizeIpoCompanyKey(name: string): string {
     .trim();
 }
 
-export function findMatchingManagedIpo<T extends { id?: string; companyName: string }>(
+function normalizeSpecificDocumentUrl(rawUrl: string | undefined | null): string | null {
+  const clean = (rawUrl ?? '').trim().toLowerCase().replace(/#.*$/, '');
+  if (!clean || !clean.startsWith('http')) return null;
+  if (GENERIC_PORTAL_URLS.has(clean) || GENERIC_PORTAL_URLS.has(clean.replace(/\/$/, ''))) {
+    return null;
+  }
+  return clean;
+}
+
+function simpleHash36(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Generates a stable, idempotent migrationKey for an IPO offering.
+ * Anchors identity on official SEBI filing/document URLs + filing/opening date + segment,
+ * never solely on company name + segment, so repeat offerings & company renames stay safe.
+ */
+export function buildStableIpoMigrationKey(candidate: {
+  migrationKey?: string;
+  companyName: string;
+  segment: IpoSegment;
+  filingDate?: string | null;
+  openingDate?: string | null;
+  listingDate?: string | null;
+  offerType?: string | null;
+  documentUrl?: string | null;
+  sourceUrl?: string | null;
+  officialDocuments?: string[];
+  id?: string;
+}): string {
+  if (candidate.migrationKey?.trim()) {
+    return candidate.migrationKey.trim().slice(0, 120);
+  }
+
+  const specificUrls = [
+    ...(candidate.officialDocuments ?? []),
+    candidate.documentUrl ?? '',
+    candidate.sourceUrl ?? '',
+  ]
+    .map((u) => normalizeSpecificDocumentUrl(u))
+    .filter((u): u is string => Boolean(u));
+
+  const seg = candidate.segment.toLowerCase();
+  if (specificUrls.length > 0) {
+    const primaryUrl = specificUrls[0];
+    return `sebi_${seg}_${simpleHash36(primaryUrl)}`;
+  }
+
+  const companyKey = normalizeIpoCompanyKey(candidate.companyName).replace(/\s+/g, '-') || 'ipo';
+  const dateAnchor =
+    normalizeToIsoDate(candidate.filingDate) ||
+    normalizeToIsoDate(candidate.openingDate) ||
+    normalizeToIsoDate(candidate.listingDate) ||
+    'undated';
+  const offerKey = (candidate.offerType ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '') || 'std';
+  const suffix = candidate.id ? `_${simpleHash36(candidate.id)}` : '';
+  return `mig_${seg}_${companyKey.slice(0, 40)}_${dateAnchor}_${offerKey}${suffix}`.slice(0, 120);
+}
+
+function daysBetweenIsoDates(a: string | null, b: string | null): number | null {
+  if (!a || !b) return null;
+  const msA = Date.parse(`${a}T00:00:00Z`);
+  const msB = Date.parse(`${b}T00:00:00Z`);
+  if (!Number.isFinite(msA) || !Number.isFinite(msB)) return null;
+  return Math.abs(Math.round((msA - msB) / 86_400_000));
+}
+
+function tokenOverlapRatio(a: string, b: string): number {
+  const tokA = new Set(a.split(/\s+/).filter((t) => t.length >= 2));
+  const tokB = new Set(b.split(/\s+/).filter((t) => t.length >= 2));
+  if (tokA.size === 0 || tokB.size === 0) return 0;
+  let shared = 0;
+  for (const t of tokA) {
+    if (tokB.has(t)) shared++;
+  }
+  return shared / Math.max(tokA.size, tokB.size);
+}
+
+export interface IpoCandidateMatchAnalysis {
+  matchType: IpoIdentityMatchType;
+  autoMergeAllowed: boolean;
+  matchedRecord?: ManagedIpoRecord;
+  relatedConflictRecord?: ManagedIpoRecord;
+  migrationKey: string;
+  conflictWarning?: string;
+}
+
+/**
+ * Evaluates candidate IPO identity against existing Firestore IPO dossiers.
+ * STRICT RULE: Never auto-merges two records solely because their company names match.
+ * Auto-merge is allowed ONLY on exact record ID, exact migrationKey, or exact specific SEBI document URL (same segment).
+ */
+export function analyzeIpoCandidateMatch(
+  existingIpos: ManagedIpoRecord[],
+  candidate: DetectedIpoCandidate,
+): IpoCandidateMatchAnalysis {
+  const migrationKey = buildStableIpoMigrationKey(candidate);
+
+  // 1. Exact ID match
+  if (candidate.id) {
+    const byId = existingIpos.find((i) => i.id === candidate.id);
+    if (byId) {
+      return {
+        matchType: 'exact_id',
+        autoMergeAllowed: true,
+        matchedRecord: byId,
+        migrationKey: byId.migrationKey || migrationKey,
+      };
+    }
+  }
+
+  // 2. Exact migrationKey match (idempotent repeat sync)
+  const byMig = existingIpos.find(
+    (i) => i.migrationKey && i.migrationKey === migrationKey,
+  );
+  if (byMig) {
+    return {
+      matchType: 'exact_migration_key',
+      autoMergeAllowed: true,
+      matchedRecord: byMig,
+      migrationKey,
+    };
+  }
+
+  // 3. Exact specific official document URL match
+  const candDocUrls = new Set(
+    [
+      ...(candidate.officialDocuments ?? []),
+      candidate.documentUrl ?? '',
+      candidate.sourceUrl ?? '',
+    ]
+      .map((u) => normalizeSpecificDocumentUrl(u))
+      .filter((u): u is string => Boolean(u)),
+  );
+
+  if (candDocUrls.size > 0) {
+    for (const existing of existingIpos) {
+      const existingUrls = [
+        ...(existing.officialDocuments ?? []),
+        existing.sourceUrl ?? '',
+      ]
+        .map((u) => normalizeSpecificDocumentUrl(u))
+        .filter((u): u is string => Boolean(u));
+
+      const sharesDocUrl = existingUrls.some((u) => candDocUrls.has(u));
+      if (sharesDocUrl) {
+        if (existing.segment !== candidate.segment) {
+          return {
+            matchType: 'conflict_segment_difference',
+            autoMergeAllowed: false,
+            relatedConflictRecord: existing,
+            migrationKey,
+            conflictWarning: `Official document matches "${existing.companyName}" (${existing.id}), but segment differs (${existing.segment} vs ${candidate.segment}). Resolve manually before merging.`,
+          };
+        }
+        const candKey = normalizeIpoCompanyKey(candidate.companyName);
+        const exKey = normalizeIpoCompanyKey(existing.companyName);
+        if (candKey !== exKey) {
+          return {
+            matchType: 'conflict_name_change_suspected',
+            autoMergeAllowed: false,
+            relatedConflictRecord: existing,
+            migrationKey,
+            conflictWarning: `Official document matches "${existing.companyName}" (${existing.id}), indicating a possible company name change to "${candidate.companyName}". Review before linking.`,
+          };
+        }
+        return {
+          matchType: 'exact_document_url',
+          autoMergeAllowed: true,
+          matchedRecord: existing,
+          migrationKey: existing.migrationKey || migrationKey,
+        };
+      }
+    }
+  }
+
+  // 4. Company-name & attribute comparisons: surface conflicts WITHOUT auto-merging
+  const candCompanyKey = normalizeIpoCompanyKey(candidate.companyName);
+  const candFiling = normalizeToIsoDate(candidate.filingDate);
+  const candOpen = normalizeToIsoDate(candidate.openingDate);
+
+  for (const existing of existingIpos) {
+    const exCompanyKey = normalizeIpoCompanyKey(existing.companyName);
+    const sameCompanyKey =
+      candCompanyKey.length >= 3 &&
+      (existing.companyName.trim().toLowerCase() === candidate.companyName.trim().toLowerCase() ||
+        exCompanyKey === candCompanyKey);
+
+    if (sameCompanyKey) {
+      if (existing.segment !== candidate.segment) {
+        return {
+          matchType: 'conflict_segment_difference',
+          autoMergeAllowed: false,
+          relatedConflictRecord: existing,
+          migrationKey,
+          conflictWarning: `Segment difference: "${candidate.companyName}" (${candidate.segment}) matches name of existing ${existing.segment} record "${existing.companyName}" (${existing.id}). Refusing auto-merge.`,
+        };
+      }
+
+      const exFiling = normalizeToIsoDate(existing.filingDate);
+      const exOpen = normalizeToIsoDate(existing.openingDate);
+      const filingGap = daysBetweenIsoDates(candFiling, exFiling);
+      const openGap = daysBetweenIsoDates(candOpen, exOpen);
+      const isRepeatOffering =
+        (filingGap !== null && filingGap > 30) ||
+        (openGap !== null && openGap > 30) ||
+        (Boolean(candidate.offerType && existing.offerType) &&
+          candidate.offerType?.trim().toLowerCase() !== existing.offerType?.trim().toLowerCase());
+
+      if (isRepeatOffering) {
+        return {
+          matchType: 'conflict_repeat_offering_candidate',
+          autoMergeAllowed: false,
+          relatedConflictRecord: existing,
+          migrationKey,
+          conflictWarning: `Repeat offering suspected for "${candidate.companyName}" compared to ${existing.id} (filing/issue dates or offer type differ). Treat as separate offering unless verified.`,
+        };
+      }
+
+      return {
+        matchType: 'conflict_potential_duplicate_name',
+        autoMergeAllowed: false,
+        relatedConflictRecord: existing,
+        migrationKey,
+        conflictWarning: `Potential duplicate company name "${candidate.companyName}" matches ${existing.id} without a shared migrationKey or official document URL. Manual review required before linking.`,
+      };
+    }
+
+    // 5. Name-change suspect check (same filing date + same issueSize OR high token overlap in same segment & date)
+    if (existing.segment === candidate.segment && candFiling && normalizeToIsoDate(existing.filingDate) === candFiling) {
+      const overlap = tokenOverlapRatio(candCompanyKey, exCompanyKey);
+      const sameIssueSize =
+        Boolean(candidate.issueSize?.trim()) &&
+        candidate.issueSize?.trim().toLowerCase() === existing.issueSize?.trim().toLowerCase();
+      if (overlap >= 0.5 || sameIssueSize) {
+        return {
+          matchType: 'conflict_name_change_suspected',
+          autoMergeAllowed: false,
+          relatedConflictRecord: existing,
+          migrationKey,
+          conflictWarning: `Possible company name change or duplicate filing on ${candFiling}: "${candidate.companyName}" vs existing "${existing.companyName}" (${existing.id}).`,
+        };
+      }
+    }
+  }
+
+  return {
+    matchType: 'no_match',
+    autoMergeAllowed: false,
+    migrationKey,
+  };
+}
+
+/**
+ * Legacy helper retained for unit/call compatibility.
+ * Note: For new migration/merge workflows, always use `analyzeIpoCandidateMatch` which
+ * detects conflicts and refuses silent merges when identities differ.
+ */
+export function findMatchingManagedIpo<T extends { id?: string; companyName: string; migrationKey?: string }>(
   ipos: T[],
   companyName: string,
+  migrationKey?: string,
 ): T | undefined {
+  if (migrationKey) {
+    const byKey = ipos.find((i) => i.migrationKey === migrationKey);
+    if (byKey) return byKey;
+  }
   const exactLower = companyName.trim().toLowerCase();
   const exact = ipos.find((i) => i.companyName.trim().toLowerCase() === exactLower);
   if (exact) return exact;
@@ -140,23 +474,42 @@ export function computeDiffFingerprint(diffs: IpoSourceDiffItem[]): string {
 export function hasDuplicateIpoReview(
   existingReviews: Array<{
     companyName: string;
+    segment?: IpoSegment;
+    targetIpoId?: string;
+    migrationKey?: string;
     reviewStatus: 'Needs Review' | 'Approved' | 'Rejected';
     diffs?: IpoSourceDiffItem[];
   }>,
   companyName: string,
   candidateDiffs: IpoSourceDiffItem[],
+  opts?: {
+    segment?: IpoSegment;
+    targetIpoId?: string;
+    migrationKey?: string;
+  },
 ): boolean {
   const candKey = normalizeIpoCompanyKey(companyName);
   const candExact = companyName.trim().toLowerCase();
   const candSig = computeDiffFingerprint(candidateDiffs);
 
   for (const rev of existingReviews) {
+    if (opts?.migrationKey && rev.migrationKey) {
+      if (opts.migrationKey !== rev.migrationKey) continue;
+    } else if (opts?.segment && rev.segment && opts.segment !== rev.segment) {
+      // Never suppress an SME review solely because a Mainboard review exists for a similar name
+      continue;
+    }
+
+    const sameTargetId = Boolean(opts?.targetIpoId && rev.targetIpoId && opts.targetIpoId === rev.targetIpoId);
     const revExact = rev.companyName.trim().toLowerCase();
     const revKey = normalizeIpoCompanyKey(rev.companyName);
-    const sameCompany = revExact === candExact || (candKey.length >= 3 && revKey === candKey);
+    const sameCompany = sameTargetId || revExact === candExact || (candKey.length >= 3 && revKey === candKey);
     if (!sameCompany) continue;
 
     if (rev.reviewStatus === 'Needs Review') {
+      if (!opts?.migrationKey && !rev.migrationKey && opts?.targetIpoId !== rev.targetIpoId) {
+        continue;
+      }
       return true;
     }
     if (candSig && computeDiffFingerprint(rev.diffs ?? []) === candSig) {
@@ -195,7 +548,6 @@ export function detectIpoFieldDiffs(
     }
   }
 
-  // Also record newly detected official SEBI document/filing link when not yet linked on existing record
   const candidateDocs = [
     ...(candidate.officialDocuments ?? []),
     candidate.documentUrl ?? '',
@@ -222,16 +574,592 @@ export function detectIpoFieldDiffs(
   return diffs;
 }
 
-export function mapManagedIpoToPublicRow(doc: ManagedIpoRecord): IpoRow {
-  const computedStatus =
-    doc.status === 'Awaiting Verification' && doc.verificationStatus === 'awaiting_verification'
-      ? 'Awaiting Verification'
-      : calculateIpoStatusFromDates({
-          openingDate: doc.openingDate,
-          closingDate: doc.closingDate,
-          listingDate: doc.listingDate,
-          verificationStatus: doc.verificationStatus,
+const SAMPLE_OR_FIXTURE_MARKER_REGEX =
+  /\b(sample|demo|demonstration|fixture|mock|placeholder|dummy|acme|test[-_ ]?ipo)\b/i;
+
+function extractLooseIsoDate(raw: string | null | undefined): string | null {
+  const strict = normalizeToIsoDate(raw);
+  if (strict) return strict;
+  const clean = (raw ?? '').replace(/\([^)]*\)/g, '').trim();
+  if (!clean) return null;
+  return normalizeToIsoDate(clean);
+}
+
+/**
+ * Classifies each built-in IPO_ALL_RECORDS entry strictly by inspecting its actual identifiers,
+ * company substance, dates, official/editorial citations, and public routing rather than
+ * labelling the entire static catalogue as sample/fixture data.
+ */
+export function classifyBuiltInIpoCatalogRecord(
+  record: IpoRow,
+  todayIso: string = getIstDateString(),
+): IpoCatalogRecordClassification {
+  const publicRoutes = [
+    '/ipo',
+    `/ipo/${record.slug}`,
+    '/search',
+    '/watchlist',
+    ...(record.verificationStatus === 'verified' ? ['/calendar'] : []),
+  ];
+
+  const candidateText = [record.id, record.slug, record.company, record.sourceName]
+    .filter(Boolean)
+    .join(' ');
+  const hasExplicitSampleMarker =
+    !record.company?.trim() ||
+    record.company.trim().length < 3 ||
+    SAMPLE_OR_FIXTURE_MARKER_REGEX.test(candidateText);
+
+  if (hasExplicitSampleMarker) {
+    return {
+      recordId: record.id,
+      slug: record.slug,
+      companyName: record.company || '(Unnamed)',
+      segment: record.segment,
+      status: record.status,
+      verificationStatus: record.verificationStatus,
+      openDate: record.openDate ?? null,
+      closeDate: record.closeDate ?? null,
+      listingDate: record.listingDate ?? null,
+      inPublicWebsite: false,
+      inManagementPreview: false,
+      classification: 'demonstration_sample',
+      evidence: 'Contains explicit sample/demo/fixture/placeholder identifier or lacks valid company name.',
+      publicRoutes,
+      conflictStatus: 'none',
+      relatedFirestoreIds: [],
+      potentialDuplicateIds: [],
+    };
+  }
+
+  const listIso = extractLooseIsoDate(record.listingDate);
+  const closeIso = extractLooseIsoDate(record.closeDate);
+  const openIso = extractLooseIsoDate(record.openDate);
+  const hasRealCompanySubstance = Boolean(
+    record.sellingShareholder?.trim() ||
+      record.offerType?.trim() ||
+      (record.financialMetrics && record.financialMetrics.length > 0) ||
+      record.relatedArticleSlug?.trim() ||
+      (record.officialDocuments && record.officialDocuments.length > 0) ||
+      record.sourceUrl?.trim(),
+  );
+
+  if (
+    record.status === 'Listed' ||
+    (listIso && listIso < todayIso) ||
+    (closeIso && closeIso < todayIso)
+  ) {
+    return {
+      recordId: record.id,
+      slug: record.slug,
+      companyName: record.company,
+      segment: record.segment,
+      status: record.status,
+      verificationStatus: record.verificationStatus,
+      openDate: record.openDate ?? null,
+      closeDate: record.closeDate ?? null,
+      listingDate: record.listingDate ?? null,
+      inPublicWebsite: true,
+      inManagementPreview: true,
+      classification: 'genuine_historical',
+      evidence: `Genuine historical IPO record (status=${record.status}, closeDate=${record.closeDate ?? 'n/a'}, listingDate=${record.listingDate ?? 'n/a'}, live public routes: ${publicRoutes.join(', ')}).`,
+      publicRoutes,
+      conflictStatus: 'none',
+      relatedFirestoreIds: [],
+      potentialDuplicateIds: [],
+    };
+  }
+
+  if (
+    hasRealCompanySubstance ||
+    (openIso && openIso >= todayIso) ||
+    (closeIso && closeIso >= todayIso) ||
+    ['Proposed OFS', 'Open', 'Upcoming', 'Closed'].includes(record.status)
+  ) {
+    return {
+      recordId: record.id,
+      slug: record.slug,
+      companyName: record.company,
+      segment: record.segment,
+      status: record.status,
+      verificationStatus: record.verificationStatus,
+      openDate: record.openDate ?? null,
+      closeDate: record.closeDate ?? null,
+      listingDate: record.listingDate ?? null,
+      inPublicWebsite: true,
+      inManagementPreview: true,
+      classification: 'genuine_current',
+      evidence: `Genuine current editorial IPO dossier (${record.offerType || record.segment}${record.sellingShareholder ? `; promoter/seller: ${record.sellingShareholder}` : ''}; dates: ${record.openDate ?? 'TBA'} – ${record.closeDate ?? 'TBA'}; live public routes: ${publicRoutes.join(', ')}).`,
+      publicRoutes,
+      conflictStatus: 'none',
+      relatedFirestoreIds: [],
+      potentialDuplicateIds: [],
+    };
+  }
+
+  return {
+    recordId: record.id,
+    slug: record.slug,
+    companyName: record.company,
+    segment: record.segment,
+    status: record.status,
+    verificationStatus: record.verificationStatus,
+    openDate: record.openDate ?? null,
+    closeDate: record.closeDate ?? null,
+    listingDate: record.listingDate ?? null,
+    inPublicWebsite: true,
+    inManagementPreview: true,
+    classification: 'unknown_review',
+    evidence: 'Static record lacks clear historical/current schedule dates or structured offering citations; classify manually before any action.',
+    publicRoutes,
+    conflictStatus: 'needs_review',
+    relatedFirestoreIds: [],
+    potentialDuplicateIds: [],
+  };
+}
+
+/**
+ * Builds a unified read-only management preview combining all Firestore IPO records and all
+ * genuine historical/current built-in IPO records while preserving original IDs, dates, and
+ * public visibility, and surfacing potential duplicates WITHOUT automatically merging them.
+ */
+export function buildUnifiedIpoManagementPreview(params: {
+  firestoreIpos: ManagedIpoRecord[];
+  staticIpos: IpoRow[];
+  todayIso?: string;
+}): UnifiedIpoPreviewEntry[] {
+  const todayIso = params.todayIso ?? getIstDateString();
+  const entries: UnifiedIpoPreviewEntry[] = [];
+
+  for (const fsIpo of params.firestoreIpos) {
+    entries.push({
+      origin: 'firestore',
+      id: fsIpo.id,
+      slug: fsIpo.slug,
+      companyName: fsIpo.companyName,
+      segment: fsIpo.segment,
+      status: fsIpo.status,
+      verificationStatus: fsIpo.verificationStatus,
+      openDate: fsIpo.openingDate ?? null,
+      closeDate: fsIpo.closingDate ?? null,
+      listingDate: fsIpo.listingDate ?? null,
+      isPubliclyVisible: isIpoPubliclyVisible(fsIpo),
+      classification: 'firestore_managed',
+      potentialDuplicateIds: [],
+      notes: fsIpo.migrationKey
+        ? `Firestore dossier (key ${fsIpo.migrationKey})`
+        : 'Firestore dossier (missing migrationKey)',
+    });
+  }
+
+  const firestoreSlugs = new Set(params.firestoreIpos.map((i) => i.slug));
+
+  for (const st of params.staticIpos) {
+    const cls = classifyBuiltInIpoCatalogRecord(st, todayIso);
+    if (cls.classification === 'demonstration_sample') {
+      continue;
+    }
+    const shadowedByFirestore = firestoreSlugs.has(st.slug);
+    entries.push({
+      origin: 'static_catalog',
+      id: st.id,
+      slug: st.slug,
+      companyName: st.company,
+      segment: st.segment,
+      status: st.status,
+      verificationStatus: st.verificationStatus ?? 'proposed',
+      openDate: st.openDate ?? null,
+      closeDate: st.closeDate ?? null,
+      listingDate: st.listingDate ?? null,
+      isPubliclyVisible: !shadowedByFirestore,
+      classification: cls.classification,
+      potentialDuplicateIds: [],
+      notes: shadowedByFirestore
+        ? `Built-in ${cls.classification} (publicly shadowed by Firestore slug "${st.slug}")`
+        : cls.evidence,
+    });
+  }
+
+  // Flag potential duplicates across unified rows strictly by normalized company key without auto-merging
+  for (let i = 0; i < entries.length; i++) {
+    const keyI = normalizeIpoCompanyKey(entries[i].companyName);
+    if (keyI.length < 3) continue;
+    for (let j = i + 1; j < entries.length; j++) {
+      const keyJ = normalizeIpoCompanyKey(entries[j].companyName);
+      if (keyI === keyJ) {
+        entries[i].potentialDuplicateIds.push(entries[j].id);
+        entries[j].potentialDuplicateIds.push(entries[i].id);
+      }
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Generates an actionable historical IPO conflict & duplicate report before any migration,
+ * detecting name changes, repeat offerings, segment differences, missing migration keys,
+ * and classifying built-in static IPOs individually with evidence (never blanket sample exclusion).
+ */
+export function buildHistoricalIpoConflictReport(params: {
+  firestoreIpos: ManagedIpoRecord[];
+  staticIpos?: IpoRow[];
+  candidates?: DetectedIpoCandidate[];
+  todayIso?: string;
+}): IpoConflictReport {
+  const items: IpoConflictItem[] = [];
+  const firestoreIpos = params.firestoreIpos;
+  const staticIpos = params.staticIpos ?? [];
+  const todayIso = params.todayIso ?? getIstDateString();
+
+  // 1. Check Firestore records pairwise & for missing migrationKeys
+  for (let i = 0; i < firestoreIpos.length; i++) {
+    const a = firestoreIpos[i];
+    if (!a.migrationKey) {
+      items.push({
+        conflictType: 'missing_migration_key',
+        severity: 'warning',
+        sourceOrigin: 'firestore',
+        recordId: a.id,
+        companyName: a.companyName,
+        segment: a.segment,
+        recommendedAction: `Assign stable migrationKey (suggested: ${buildStableIpoMigrationKey(a)}) in a dry-run report before any bulk migration.`,
+        reason: 'Firestore IPO dossier relies on document ID only without an explicit migrationKey.',
+      });
+    }
+
+    for (let j = i + 1; j < firestoreIpos.length; j++) {
+      const b = firestoreIpos[j];
+      const keyA = normalizeIpoCompanyKey(a.companyName);
+      const keyB = normalizeIpoCompanyKey(b.companyName);
+      const sameCompany = keyA.length >= 3 && keyA === keyB;
+
+      if (sameCompany && a.segment !== b.segment) {
+        items.push({
+          conflictType: 'segment_difference',
+          severity: 'blocking',
+          sourceOrigin: 'firestore',
+          recordId: a.id,
+          companyName: a.companyName,
+          segment: a.segment,
+          relatedRecordId: b.id,
+          relatedCompanyName: b.companyName,
+          relatedSegment: b.segment,
+          recommendedAction: 'Keep distinct IDs/migrationKeys; verify whether segment reclassified or two entities share a name.',
+          reason: `Same normalized company name across different segments (${a.segment} vs ${b.segment}).`,
         });
+      } else if (sameCompany) {
+        const filingGap = daysBetweenIsoDates(normalizeToIsoDate(a.filingDate), normalizeToIsoDate(b.filingDate));
+        const openGap = daysBetweenIsoDates(normalizeToIsoDate(a.openingDate), normalizeToIsoDate(b.openingDate));
+        const isRepeat = (filingGap !== null && filingGap > 30) || (openGap !== null && openGap > 30);
+        items.push({
+          conflictType: isRepeat ? 'repeat_offering_candidate' : 'potential_duplicate_name',
+          severity: isRepeat ? 'warning' : 'blocking',
+          sourceOrigin: 'firestore',
+          recordId: a.id,
+          companyName: a.companyName,
+          segment: a.segment,
+          relatedRecordId: b.id,
+          relatedCompanyName: b.companyName,
+          relatedSegment: b.segment,
+          recommendedAction: isRepeat
+            ? 'Preserve both historical offerings with separate IDs and distinct migrationKeys.'
+            : 'Inspect manually before archiving or removing duplicate.',
+          reason: isRepeat
+            ? `Likely repeat offering for ${a.companyName} (${a.openingDate || a.filingDate || 'undated'} vs ${b.openingDate || b.filingDate || 'undated'}).`
+            : `Potential duplicate Firestore records with matching company name and segment (${a.id}, ${b.id}).`,
+        });
+      } else {
+        const filingA = normalizeToIsoDate(a.filingDate);
+        const filingB = normalizeToIsoDate(b.filingDate);
+        if (filingA && filingB && filingA === filingB && a.segment === b.segment) {
+          const overlap = tokenOverlapRatio(keyA, keyB);
+          if (overlap >= 0.5) {
+            items.push({
+              conflictType: 'name_change_suspected',
+              severity: 'warning',
+              sourceOrigin: 'firestore',
+              recordId: a.id,
+              companyName: a.companyName,
+              segment: a.segment,
+              relatedRecordId: b.id,
+              relatedCompanyName: b.companyName,
+              relatedSegment: b.segment,
+              recommendedAction: 'Confirm whether company renamed prior to DRHP/RHP update; preserve original ID if same offering.',
+              reason: `High name overlap (${Math.round(overlap * 100)}%) and identical filing date ${filingA}.`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Classify each built-in static catalog IPO by evidence rather than blanket sample exclusion
+  let sampleExcludedCount = 0;
+  let genuineCatalogCount = 0;
+  let unknownReviewCount = 0;
+  const recordClassifications: IpoCatalogRecordClassification[] = [];
+
+  for (const s of staticIpos) {
+    const cls = classifyBuiltInIpoCatalogRecord(s, todayIso);
+    const analysis = analyzeIpoCandidateMatch(firestoreIpos, {
+      id: s.id,
+      companyName: s.company,
+      segment: s.segment,
+      issueSize: s.issueSize ?? undefined,
+      priceBand: s.priceBand ?? undefined,
+      filingDate: s.filingDate ?? undefined,
+      openingDate: s.openDate ?? undefined,
+      closingDate: s.closeDate ?? undefined,
+      listingDate: s.listingDate ?? undefined,
+      offerType: s.offerType ?? undefined,
+      sourceName: s.sourceName,
+      sourceUrl: s.sourceUrl ?? '',
+    });
+
+    const relatedIds: string[] = [];
+    if (analysis.matchedRecord) relatedIds.push(analysis.matchedRecord.id);
+    if (analysis.relatedConflictRecord && !relatedIds.includes(analysis.relatedConflictRecord.id)) {
+      relatedIds.push(analysis.relatedConflictRecord.id);
+    }
+    cls.relatedFirestoreIds = relatedIds;
+
+    if (cls.classification === 'demonstration_sample') {
+      sampleExcludedCount++;
+      cls.conflictStatus = analysis.relatedConflictRecord ? 'potential_duplicate' : 'none';
+      recordClassifications.push(cls);
+      items.push({
+        conflictType: 'sample_or_fixture_excluded',
+        severity: analysis.relatedConflictRecord ? 'blocking' : 'warning',
+        sourceOrigin: 'static_catalog',
+        recordId: s.id,
+        companyName: s.company,
+        segment: s.segment,
+        relatedRecordId: analysis.matchedRecord?.id ?? analysis.relatedConflictRecord?.id,
+        relatedCompanyName: analysis.matchedRecord?.companyName ?? analysis.relatedConflictRecord?.companyName,
+        relatedSegment: analysis.matchedRecord?.segment ?? analysis.relatedConflictRecord?.segment,
+        recommendedAction: 'Exclude demonstration/sample/fixture record from production migration.',
+        reason: analysis.conflictWarning || cls.evidence,
+      });
+      continue;
+    }
+
+    if (cls.classification === 'unknown_review') {
+      unknownReviewCount++;
+      cls.conflictStatus = 'needs_review';
+      recordClassifications.push(cls);
+      items.push({
+        conflictType: 'missing_migration_key',
+        severity: 'warning',
+        sourceOrigin: 'static_catalog',
+        recordId: s.id,
+        companyName: s.company,
+        segment: s.segment,
+        relatedRecordId: analysis.matchedRecord?.id ?? analysis.relatedConflictRecord?.id,
+        relatedCompanyName: analysis.matchedRecord?.companyName ?? analysis.relatedConflictRecord?.companyName,
+        relatedSegment: analysis.matchedRecord?.segment ?? analysis.relatedConflictRecord?.segment,
+        recommendedAction: 'Classify manually as historical, current, or sample before taking action.',
+        reason: cls.evidence,
+      });
+      continue;
+    }
+
+    // Genuine historical or genuine current built-in IPO
+    genuineCatalogCount++;
+    if (analysis.matchedRecord) {
+      cls.conflictStatus = 'matched_firestore';
+    } else if (analysis.relatedConflictRecord) {
+      cls.conflictStatus = 'potential_duplicate';
+      const mappedType: IpoConflictItem['conflictType'] =
+        analysis.matchType === 'conflict_segment_difference'
+          ? 'segment_difference'
+          : analysis.matchType === 'conflict_name_change_suspected'
+            ? 'name_change_suspected'
+            : analysis.matchType === 'conflict_repeat_offering_candidate'
+              ? 'repeat_offering_candidate'
+              : 'potential_duplicate_name';
+      items.push({
+        conflictType: mappedType,
+        severity: 'blocking',
+        sourceOrigin: 'static_catalog',
+        recordId: s.id,
+        companyName: s.company,
+        segment: s.segment,
+        relatedRecordId: analysis.relatedConflictRecord.id,
+        relatedCompanyName: analysis.relatedConflictRecord.companyName,
+        relatedSegment: analysis.relatedConflictRecord.segment,
+        recommendedAction:
+          'Potential duplicate/conflict between built-in genuine IPO and Firestore record; inspect in Unified Preview without auto-merging.',
+        reason: analysis.conflictWarning || cls.evidence,
+      });
+    } else {
+      cls.conflictStatus = 'none';
+    }
+    recordClassifications.push(cls);
+  }
+
+  // 3. Check incoming candidate conflicts
+  for (const cand of params.candidates ?? []) {
+    const analysis = analyzeIpoCandidateMatch(firestoreIpos, cand);
+    if (!analysis.autoMergeAllowed && analysis.relatedConflictRecord) {
+      const mappedType =
+        analysis.matchType === 'conflict_segment_difference'
+          ? 'segment_difference'
+          : analysis.matchType === 'conflict_name_change_suspected'
+            ? 'name_change_suspected'
+            : analysis.matchType === 'conflict_repeat_offering_candidate'
+              ? 'repeat_offering_candidate'
+              : 'potential_duplicate_name';
+      items.push({
+        conflictType: mappedType,
+        severity: 'blocking',
+        sourceOrigin: 'sebi_candidate',
+        recordId: analysis.migrationKey,
+        companyName: cand.companyName,
+        segment: cand.segment,
+        relatedRecordId: analysis.relatedConflictRecord.id,
+        relatedCompanyName: analysis.relatedConflictRecord.companyName,
+        relatedSegment: analysis.relatedConflictRecord.segment,
+        recommendedAction: 'Review candidate diff manually in Section 10 before creating or updating any dossier.',
+        reason: analysis.conflictWarning || 'Identity ambiguity requires manual review.',
+      });
+    }
+  }
+
+  const unifiedPreview = buildUnifiedIpoManagementPreview({
+    firestoreIpos,
+    staticIpos,
+    todayIso,
+  });
+
+  const previewById = new Map(
+    unifiedPreview.filter((e) => e.origin === 'static_catalog').map((e) => [e.id, e]),
+  );
+  for (const cls of recordClassifications) {
+    const matchPreview = previewById.get(cls.recordId);
+    cls.inManagementPreview = Boolean(matchPreview);
+    cls.potentialDuplicateIds = matchPreview ? [...matchPreview.potentialDuplicateIds] : [...cls.relatedFirestoreIds];
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totalFirestoreIpos: firestoreIpos.length,
+    totalStaticIpos: staticIpos.length,
+    blockingConflictCount: items.filter((i) => i.severity === 'blocking').length,
+    warningCount: items.filter((i) => i.severity === 'warning').length,
+    sampleExcludedCount,
+    genuineCatalogCount,
+    unknownReviewCount,
+    items,
+    recordClassifications,
+    unifiedPreview,
+  };
+}
+
+export interface IpoLinkedReferencesReport {
+  officialDocumentUrls: string[];
+  linkedReviewIds: string[];
+  pendingReviewIds: string[];
+  linkedArticleIds: string[];
+  linkedMediaIds: string[];
+  hasBlockingPendingReviews: boolean;
+  summary: string;
+}
+
+/**
+ * Inspects linked official SEBI documents, active/historical source reviews, related editorial
+ * articles, and attached media assets before permanently deleting a non-public IPO dossier.
+ * Never removes shared articles or shared media assets when an IPO record is deleted.
+ */
+export function inspectIpoLinkedReferences(params: {
+  ipo: ManagedIpoRecord;
+  articles?: StoredArticleDoc[];
+  reviews?: IpoSourceReviewRecord[];
+}): IpoLinkedReferencesReport {
+  const { ipo } = params;
+  const articles = params.articles ?? [];
+  const reviews = params.reviews ?? [];
+
+  const officialDocumentUrls = [
+    ...new Set(
+      [...(ipo.officialDocuments ?? []), ipo.sourceUrl ?? '']
+        .map((u) => u.trim())
+        .filter((u) => /^https?:\/\//i.test(u)),
+    ),
+  ];
+  const lowerDocUrls = new Set(officialDocumentUrls.map((u) => u.toLowerCase()));
+
+  const linkedReviewIds: string[] = [];
+  const pendingReviewIds: string[] = [];
+  for (const rev of reviews) {
+    const matchesTarget =
+      rev.targetIpoId === ipo.id ||
+      (Boolean(ipo.migrationKey) && rev.migrationKey === ipo.migrationKey);
+    if (!matchesTarget) continue;
+    linkedReviewIds.push(rev.id);
+    if (rev.reviewStatus === 'Needs Review') {
+      pendingReviewIds.push(rev.id);
+    }
+  }
+
+  const companyKey = normalizeIpoCompanyKey(ipo.companyName);
+  const linkedArticleIds: string[] = [];
+  const linkedMediaSet = new Set<string>();
+
+  for (const art of articles) {
+    if (art.status === 'Deleted' || art.deletionStatus === 'deleted') continue;
+    const sources = [
+      art.sourceUrl ?? '',
+      ...(art.officialSources ?? []),
+    ]
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const sharesDocUrl = sources.some((s) => lowerDocUrls.has(s));
+    const haystack = [
+      art.slug,
+      ...(art.entities ?? []),
+      ...(art.tags ?? []),
+      art.body ?? '',
+      art.enBody ?? '',
+    ]
+      .join(' ')
+      .toLowerCase();
+    const mentionsSlugOrCompany =
+      (ipo.slug && haystack.includes(ipo.slug.toLowerCase())) ||
+      (companyKey.length >= 4 && haystack.includes(companyKey));
+
+    if (sharesDocUrl || mentionsSlugOrCompany) {
+      linkedArticleIds.push(art.id);
+      if (art.mediaId?.trim()) {
+        linkedMediaSet.add(art.mediaId.trim());
+      }
+    }
+  }
+
+  const linkedMediaIds = [...linkedMediaSet];
+  const summary = `Checked references: ${officialDocumentUrls.length} official link(s), ${linkedReviewIds.length} SEBI review(s) (${pendingReviewIds.length} Needs Review), ${linkedArticleIds.length} related article(s), ${linkedMediaIds.length} linked media asset(s) preserved.`;
+
+  return {
+    officialDocumentUrls,
+    linkedReviewIds,
+    pendingReviewIds,
+    linkedArticleIds,
+    linkedMediaIds,
+    hasBlockingPendingReviews: pendingReviewIds.length > 0,
+    summary,
+  };
+}
+
+export function mapManagedIpoToPublicRow(doc: ManagedIpoRecord): IpoRow {
+  const computedStatus = calculateIpoStatusFromDates({
+    openingDate: doc.openingDate,
+    closingDate: doc.closingDate,
+    listingDate: doc.listingDate,
+    verificationStatus: doc.verificationStatus,
+    currentStatus: doc.status,
+    isArchived: doc.isArchived,
+    deletionStatus: doc.deletionStatus,
+  });
 
   return {
     id: doc.id,
@@ -280,4 +1208,3 @@ export function assertReviewPendingResolution(
     );
   }
 }
-

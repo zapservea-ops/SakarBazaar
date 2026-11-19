@@ -1,9 +1,8 @@
 import { ARTICLES_CATALOG } from '../../data/sampleData';
 import {
+  classifyArticleLifecycle,
   formatRemainingDuration,
-  isArticleExpired,
   isArticleExpiringSoon,
-  isArticlePubliclyVisible,
 } from '../../utils/newsLifecycle';
 import { estimateMediaQuotaUsage } from '../../utils/mediaLibrary';
 import type { AdminSectionBaseProps } from './adminTypes';
@@ -16,31 +15,21 @@ export function AdminDashboardOverview({
   const nowMs = Date.now();
   const thresholdHours = data.systemSettings.expiringSoonThresholdHours || 48;
 
-  const activePublished = data.articles.filter((a) => isArticlePubliclyVisible(a, nowMs));
-  const drafts = data.articles.filter((a) => a.status === 'Draft' || a.status === 'Awaiting Verification' || a.status === 'Verified');
+  const classified = data.articles.map((a) => ({
+    article: a,
+    lifecycle: classifyArticleLifecycle(a, nowMs),
+  }));
+
+  const activePublished = classified.filter((c) => c.lifecycle.isPublic).map((c) => c.article);
+  const drafts = classified.filter((c) => c.lifecycle.isDraftReview).map((c) => c.article);
   const expiringSoon = data.articles.filter((a) => isArticleExpiringSoon(a, nowMs, thresholdHours));
-  const expiredOrRetained = data.articles.filter(
-    (a) =>
-      (a.status === 'Expired' ||
-        a.status === 'Retained' ||
-        a.status === 'Archived' ||
-        (a.status === 'Published' && isArticleExpired(a, nowMs))) &&
-      a.deletionStatus !== 'approved' &&
-      a.deletionStatus !== 'in_progress' &&
-      a.deletionStatus !== 'partial_failure',
-  );
+  const expiredOrRetained = classified.filter((c) => c.lifecycle.isExpiredArchive).map((c) => c.article);
   const firestoreIds = new Set(data.articles.map((a) => a.id));
   const firestoreSlugs = new Set(data.articles.map((a) => a.slug));
   const unmigratedLegacyCount = ARTICLES_CATALOG.filter(
     (base) => !firestoreIds.has(base.id) && !firestoreSlugs.has(base.slug),
   ).length;
-  const pendingDeletion = data.articles.filter(
-    (a) =>
-      a.status === 'Pending Deletion' ||
-      a.status === 'Deletion In Progress' ||
-      a.deletionStatus === 'approved' ||
-      a.deletionStatus === 'partial_failure',
-  );
+  const pendingDeletion = classified.filter((c) => c.lifecycle.inDeletionQueue).map((c) => c.article);
   const needsReviewIpos = data.ipoReviews.filter((r) => r.reviewStatus === 'Needs Review');
   const quota = estimateMediaQuotaUsage(data.media);
 

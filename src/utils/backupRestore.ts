@@ -1,9 +1,13 @@
 import type {
   AuditLogRecord,
   AuthorizedEmailRecord,
+  BackupCollectionConflictPreview,
   BackupCollectionScopeInfo,
+  BackupConflictPolicy,
   BackupRestoreFailure,
+  BackupRestorePreview,
   BackupRestoreReport,
+  BackupTargetIdentity,
   LegacyOverridesRecord,
   ManagedIpoRecord,
   IpoSourceReviewRecord,
@@ -18,6 +22,11 @@ import { MAX_FIRESTORE_DATA_URL_LENGTH } from './mediaLibrary';
 
 export const BACKUP_AUDIT_LOG_EXPORT_LIMIT = 200;
 
+export const PRODUCTION_TARGET_IDENTITY: BackupTargetIdentity = {
+  projectId: 'dark-tea-xpd8p',
+  firestoreDatabaseId: 'ai-studio-efe3d2d3-00e3-4fb7-b2d9-c39abe14c8ac',
+};
+
 export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
   {
     key: 'articles',
@@ -25,7 +34,7 @@ export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
     category: 'content',
     exported: true,
     restored: true,
-    restoreNote: 'Restored record-by-record with schema allowlist; immutable creator/timestamp fields preserved on existing records.',
+    restoreNote: 'Restored record-by-record with schema allowlist; existing docs skipped by default unless explicit conflict policy overrides.',
   },
   {
     key: 'media',
@@ -57,7 +66,7 @@ export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
     category: 'content',
     exported: true,
     restored: true,
-    restoreNote: 'Restored for verified/proposed IPO schedule tracking.',
+    restoreNote: 'Restored for verified/proposed/archived IPO schedule tracking while preserving IDs and migration keys.',
   },
   {
     key: 'legacyOverrides',
@@ -65,7 +74,7 @@ export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
     category: 'operational',
     exported: true,
     restored: true,
-    restoreNote: 'Restored so previously unpublished/deleted static articles remain suppressed publicly.',
+    restoreNote: 'Restored non-destructively (union-merged when skipping existing) so suppressed static articles stay hidden publicly.',
   },
   {
     key: 'ipoSourceReviews',
@@ -73,7 +82,7 @@ export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
     category: 'operational',
     exported: true,
     restored: false,
-    restoreNote: 'Exported for historical audit only; NOT automatically overwritten during restore—re-run SEBI Check in Admin if needed.',
+    restoreNote: 'Exported for historical audit only; NOT automatically restored—re-run SEBI Check in Admin if needed.',
   },
   {
     key: 'auditLogs',
@@ -90,7 +99,7 @@ export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
     category: 'security_sensitive',
     exported: true,
     restored: false,
-    restoreNote: 'Security-sensitive RBAC configuration; excluded from automated restore—manage manually in Section 9.',
+    restoreNote: 'Security-sensitive RBAC configuration; excluded from automated restore—manage manually in Section 12.',
   },
   {
     key: 'systemSettings',
@@ -98,8 +107,14 @@ export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
     category: 'security_sensitive',
     exported: true,
     restored: false,
-    restoreNote: 'Security-sensitive platform defaults; excluded from automated restore—manage manually in Section 9.',
+    restoreNote: 'Security-sensitive platform defaults; excluded from automated restore—manage manually in Section 12.',
   },
+];
+
+export const BACKUP_EXCLUSION_NOTES: string[] = [
+  'Security-sensitive RBAC allowlist (/authorizedEmails) and system configuration (/systemSettings) are exported for inspection only and excluded from restore.',
+  'Append-only audit trail (/auditLogs, capped at 200 entries) and SEBI review queue (/ipoSourceReviews) are excluded from restore.',
+  'External media payloads and binary video files (YouTube streams / local video archives / static bundled assets under public/assets/) are not stored or restored as mediaPayloads binary blobs.',
 ];
 
 export const NON_ATOMIC_RESTORE_WARNING =
@@ -108,12 +123,27 @@ export const NON_ATOMIC_RESTORE_WARNING =
 export function buildInitialBackupRestoreReport(
   bundle: SakarBazaarBackupBundle,
   startedAt: string = new Date().toISOString(),
+  opts?: {
+    targetIdentity?: BackupTargetIdentity;
+    conflictPolicy?: BackupConflictPolicy;
+  },
 ): BackupRestoreReport {
   return {
     startedAt,
     completedAt: startedAt,
+    targetProjectId: opts?.targetIdentity?.projectId,
+    targetDatabaseId: opts?.targetIdentity?.firestoreDatabaseId,
+    conflictPolicy: opts?.conflictPolicy ?? 'skip_existing',
     nonAtomicWarning: NON_ATOMIC_RESTORE_WARNING,
     restoredByCollection: {
+      articles: 0,
+      media: 0,
+      mediaPayloads: 0,
+      paidCampaigns: 0,
+      ipos: 0,
+      legacyOverrides: 0,
+    },
+    skippedExistingByCollection: {
       articles: 0,
       media: 0,
       mediaPayloads: 0,
@@ -138,13 +168,13 @@ export function buildInitialBackupRestoreReport(
         collection: 'authorizedEmails',
         countInBackup: bundle.data.authorizedEmails?.length ?? 0,
         category: 'security_sensitive',
-        reason: 'Security-sensitive user role allowlist requires manual review in Section 9; never auto-restored.',
+        reason: 'Security-sensitive user role allowlist requires manual review in Section 12; never auto-restored.',
       },
       {
         collection: 'systemSettings',
         countInBackup: bundle.data.systemSettings?.length ?? 0,
         category: 'security_sensitive',
-        reason: 'Security-sensitive system configuration requires manual review in Section 9; never auto-restored.',
+        reason: 'Security-sensitive system configuration requires manual review in Section 12; never auto-restored.',
       },
     ],
     failed: [] as BackupRestoreFailure[],
@@ -155,6 +185,8 @@ export function buildInitialBackupRestoreReport(
 export function buildSakarBazaarBackupBundle(params: {
   exportedByUid: string;
   exportedByEmail: string;
+  sourceProjectId?: string;
+  sourceDatabaseId?: string;
   exportedAt?: string;
   articles: StoredArticleDoc[];
   media: StoredMediaAssetDoc[];
@@ -170,6 +202,8 @@ export function buildSakarBazaarBackupBundle(params: {
   return {
     schemaVersion: '1.0.0',
     app: 'SakarBazaar',
+    ...(params.sourceProjectId ? { sourceProjectId: params.sourceProjectId } : {}),
+    ...(params.sourceDatabaseId ? { sourceDatabaseId: params.sourceDatabaseId } : {}),
     exportedAt: params.exportedAt ?? new Date().toISOString(),
     exportedByUid: params.exportedByUid,
     exportedByEmail: params.exportedByEmail,
@@ -245,6 +279,9 @@ export function validateBackupBundle(raw: unknown): BackupValidationReport {
   if (bundle.app !== 'SakarBazaar' || bundle.schemaVersion !== '1.0.0') {
     errors.push('Unsupported backup format or schemaVersion (expected SakarBazaar v1.0.0).');
   }
+  if (!bundle.sourceProjectId || !bundle.sourceDatabaseId) {
+    warnings.push('Backup metadata does not declare sourceProjectId/sourceDatabaseId; verify target database identity carefully before restoring.');
+  }
   if (!bundle.data || typeof bundle.data !== 'object') {
     errors.push('Missing "data" payload section inside backup file.');
     return {
@@ -274,7 +311,14 @@ export function validateBackupBundle(raw: unknown): BackupValidationReport {
 
   for (const art of articles) {
     if (!art?.id || !art?.slug) {
-      errors.push(`Invalid article entry missing id or slug.`);
+      errors.push('Invalid article entry missing id or slug.');
+      break;
+    }
+  }
+
+  for (const ipo of ipos) {
+    if (!ipo?.id || !ipo?.slug || !ipo?.companyName) {
+      errors.push('Invalid IPO entry missing id, slug, or companyName.');
       break;
     }
   }
@@ -311,6 +355,171 @@ export function validateBackupBundle(raw: unknown): BackupValidationReport {
       ipoSourceReviews: ipoSourceReviews.length,
       auditLogs: auditLogs.length,
     },
+  };
+}
+
+export function isProductionDatabaseTarget(target: BackupTargetIdentity): boolean {
+  return (
+    target.projectId === PRODUCTION_TARGET_IDENTITY.projectId ||
+    target.firestoreDatabaseId === PRODUCTION_TARGET_IDENTITY.firestoreDatabaseId
+  );
+}
+
+export function verifyRestoreTargetIdentity(params: {
+  activeTarget: BackupTargetIdentity;
+  confirmedProjectId: string;
+  confirmedDatabaseId: string;
+}): { ok: boolean; error?: string } {
+  const proj = params.confirmedProjectId.trim();
+  const dbId = params.confirmedDatabaseId.trim();
+  if (!proj || !dbId) {
+    return {
+      ok: false,
+      error: 'Enter both the target Firebase Project ID and Firestore Database ID to confirm restore destination.',
+    };
+  }
+  if (
+    isProductionDatabaseTarget(params.activeTarget) ||
+    isProductionDatabaseTarget({ projectId: proj, firestoreDatabaseId: dbId })
+  ) {
+    return {
+      ok: false,
+      error: `Safety block: "${PRODUCTION_TARGET_IDENTITY.projectId}" / "${PRODUCTION_TARGET_IDENTITY.firestoreDatabaseId}" is the protected live production database. Automated/UI backup restore is unconditionally blocked for production; execute restore ONLY against an isolated test project/database or local emulator.`,
+    };
+  }
+  if (proj !== params.activeTarget.projectId || dbId !== params.activeTarget.firestoreDatabaseId) {
+    return {
+      ok: false,
+      error: `Target database mismatch: entered (${proj} / ${dbId}) does not match active runtime database (${params.activeTarget.projectId} / ${params.activeTarget.firestoreDatabaseId}). Restore aborted.`,
+    };
+  }
+  return { ok: true };
+}
+
+export function buildBackupRestorePreview(params: {
+  bundle: SakarBazaarBackupBundle;
+  targetIdentity: BackupTargetIdentity;
+  conflictPolicy?: BackupConflictPolicy;
+  existingIds: {
+    articles?: ReadonlySet<string>;
+    media?: ReadonlySet<string>;
+    mediaPayloads?: ReadonlySet<string>;
+    paidCampaigns?: ReadonlySet<string>;
+    ipos?: ReadonlySet<string>;
+  };
+}): BackupRestorePreview {
+  const { bundle, targetIdentity } = params;
+  const conflictPolicy: BackupConflictPolicy = params.conflictPolicy ?? 'skip_existing';
+  const validation = validateBackupBundle(bundle);
+  const warnings = [...validation.warnings];
+
+  const sourceProjectId = bundle.sourceProjectId ?? null;
+  const sourceDatabaseId = bundle.sourceDatabaseId ?? null;
+  const identityMatchesSource =
+    sourceProjectId && sourceDatabaseId
+      ? sourceProjectId === targetIdentity.projectId &&
+        sourceDatabaseId === targetIdentity.firestoreDatabaseId
+      : null;
+
+  if (identityMatchesSource === false) {
+    warnings.push(
+      `Backup exported from (${sourceProjectId}/${sourceDatabaseId}), whereas active target is (${targetIdentity.projectId}/${targetIdentity.firestoreDatabaseId}).`,
+    );
+  }
+  if (isProductionDatabaseTarget(targetIdentity)) {
+    warnings.push(
+      'Active target is the production database. Never run restore tests against production; use an isolated test project or local emulator.',
+    );
+  }
+
+  function previewCollection(
+    collection: BackupCollectionConflictPreview['collection'],
+    ids: string[],
+    existingSet?: ReadonlySet<string>,
+  ): BackupCollectionConflictPreview {
+    const existingConflictIds: string[] = [];
+    const newCreateIds: string[] = [];
+    for (const id of ids) {
+      if (existingSet?.has(id)) {
+        existingConflictIds.push(id);
+      } else {
+        newCreateIds.push(id);
+      }
+    }
+    return {
+      collection,
+      inBackupCount: ids.length,
+      existingConflictIds,
+      newCreateIds,
+    };
+  }
+
+  const d = bundle.data ?? {
+    articles: [],
+    media: [],
+    mediaPayloads: [],
+    paidCampaigns: [],
+    ipos: [],
+    ipoSourceReviews: [],
+    auditLogs: [],
+    authorizedEmails: [],
+    systemSettings: [],
+  };
+
+  const conflictsByCollection: BackupCollectionConflictPreview[] = [
+    previewCollection('articles', (d.articles ?? []).map((a) => a.id), params.existingIds.articles),
+    previewCollection('media', (d.media ?? []).map((m) => m.id), params.existingIds.media),
+    previewCollection(
+      'mediaPayloads',
+      (d.mediaPayloads ?? []).map((p) => p.mediaId || p.id),
+      params.existingIds.mediaPayloads,
+    ),
+    previewCollection(
+      'paidCampaigns',
+      (d.paidCampaigns ?? []).map((c) => c.id),
+      params.existingIds.paidCampaigns,
+    ),
+    previewCollection('ipos', (d.ipos ?? []).map((i) => i.id), params.existingIds.ipos),
+  ];
+
+  const totalExistingConflicts = conflictsByCollection.reduce(
+    (sum, c) => sum + c.existingConflictIds.length,
+    0,
+  );
+
+  if (totalExistingConflicts > 0 && conflictPolicy === 'fail_on_conflict') {
+    warnings.push(
+      `${totalExistingConflicts} document conflict(s) detected and policy is Fail on Conflict — execution will abort cleanly without modifying existing documents.`,
+    );
+  }
+
+  const initReport = buildInitialBackupRestoreReport(bundle, undefined, {
+    targetIdentity,
+    conflictPolicy,
+  });
+
+  return {
+    valid: validation.valid,
+    sourceProjectId,
+    sourceDatabaseId,
+    targetProjectId: targetIdentity.projectId,
+    targetDatabaseId: targetIdentity.firestoreDatabaseId,
+    identityMatchesSource,
+    conflictPolicy,
+    expectedCounts: {
+      articles: d.articles?.length ?? 0,
+      media: d.media?.length ?? 0,
+      mediaPayloads: d.mediaPayloads?.length ?? 0,
+      paidCampaigns: d.paidCampaigns?.length ?? 0,
+      ipos: d.ipos?.length ?? 0,
+      legacyOverrides: d.legacyOverrides ? 1 : 0,
+    },
+    conflictsByCollection,
+    totalExistingConflicts,
+    skippedCollections: initReport.skippedCollections,
+    exclusions: BACKUP_EXCLUSION_NOTES,
+    errors: validation.errors,
+    warnings,
   };
 }
 
@@ -408,6 +617,7 @@ const PAID_CAMPAIGN_RESTORE_KEYS = [
 ] as const;
 
 const IPO_RESTORE_KEYS = [
+  'migrationKey',
   'companyName',
   'slug',
   'segment',
@@ -427,6 +637,9 @@ const IPO_RESTORE_KEYS = [
   'sourceName',
   'sourceUrl',
   'verificationStatus',
+  'previousVerificationStatus',
+  'isArchived',
+  'deletionStatus',
   'lastVerifiedAt',
 ] as const;
 
@@ -494,7 +707,8 @@ export function prepareRestoredIpoPayload(
   actorUid: string,
 ): Record<string, unknown> {
   const base = pickAllowedKeys(ipo as unknown as Record<string, unknown>, IPO_RESTORE_KEYS);
+  base.isArchived = Boolean(ipo.isArchived);
+  base.deletionStatus = ipo.deletionStatus ?? 'none';
   base.updatedByUid = actorUid;
   return base;
 }
-

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import {
+  approveArticleForPermanentDeletion,
   cancelArticleDeletionApproval,
   executePermanentArticleDeletion,
 } from '../../lib/firebase';
@@ -7,6 +8,7 @@ import type { StoredArticleDoc } from '../../types/sakarbazaar';
 import { canSafelyDeleteMediaAsset } from '../../utils/mediaLibrary';
 import {
   canRetryPermanentDeletion,
+  classifyArticleLifecycle,
   extractReadableErrorMessage,
   isArticleInDeletionQueue,
 } from '../../utils/newsLifecycle';
@@ -28,6 +30,29 @@ export function AdminPendingDeletion({
   const busyIdsRef = useRef<Set<string>>(new Set());
 
   const queue = data.articles.filter(isArticleInDeletionQueue);
+
+  async function handleApprove(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
+    setBusyId(art.id);
+    try {
+      await approveArticleForPermanentDeletion(art);
+      await onRefresh();
+      await onPublicContentChanged();
+      onNotify({
+        tone: 'ok',
+        text: `Approved permanent deletion for "${art.enHeadline || art.title}". You may now execute final removal.`,
+      });
+    } catch (err) {
+      onNotify({
+        tone: 'err',
+        text: extractReadableErrorMessage(err, 'Unable to approve permanent deletion.'),
+      });
+    } finally {
+      busyIdsRef.current.delete(art.id);
+      setBusyId(null);
+    }
+  }
 
   async function handleExecute(art: StoredArticleDoc) {
     if (busyIdsRef.current.has(art.id)) return;
@@ -82,8 +107,9 @@ export function AdminPendingDeletion({
         <div>
           <h2>Pending Deletion ({queue.length})</h2>
           <p className="sb-sec-sub">
-            Both Owner and Publisher may approve and execute permanent deletion. Shared media used by other articles is
-            automatically preserved; unshared photos and payloads are permanently removed with an immutable audit entry.
+            Articles awaiting deletion approval (<code>pending_approval</code>) and approved deletions appear here
+            immediately. Execution verifies authoritative Firestore media references right before removing unshared
+            photos/payloads and records an idempotent audit entry.
           </p>
         </div>
       </div>
@@ -91,20 +117,36 @@ export function AdminPendingDeletion({
       {queue.length > 0 ? (
         <div className="sb-admin-card-list">
           {queue.map((art) => {
+            const cls = classifyArticleLifecycle(art);
             const mediaGuard = art.mediaId
               ? canSafelyDeleteMediaAsset(art.mediaId, data.articles, art.id)
               : null;
-            const isPartialFailure = art.deletionStatus === 'partial_failure';
+            const isPendingApproval = cls.stage === 'deletion_pending_approval';
+            const isPartialFailure = cls.stage === 'deletion_partial_failure';
+            const isInProgress = cls.stage === 'deletion_in_progress';
             const canExecute = canRetryPermanentDeletion(art, adminRole);
 
             return (
               <article className="sb-admin-item-card" key={art.id}>
                 <div className="sb-admin-item-top">
-                  <span className={`pill ${isPartialFailure ? 'sb-pill-amber' : 'sb-pill-muted'}`}>
-                    {isPartialFailure ? 'Partial Failure — Retry Available' : art.status}
-                  </span>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span
+                      className={`pill ${
+                        isPartialFailure || isPendingApproval ? 'sb-pill-amber' : 'sb-pill-muted'
+                      }`}
+                    >
+                      {cls.statusLabel}
+                    </span>
+                    {art.deletionStatus && (
+                      <span className="pill">
+                        <code>{art.deletionStatus}</code>
+                      </span>
+                    )}
+                  </div>
                   <span className="meta">
-                    Approved by: {art.deletionApprovedByEmail || 'Operator'}
+                    {isPendingApproval
+                      ? `Requested by: ${art.deletionApprovedByEmail || 'Operator'}`
+                      : `Approved by: ${art.deletionApprovedByEmail || 'Operator'}`}
                   </span>
                 </div>
 
@@ -113,8 +155,20 @@ export function AdminPendingDeletion({
                   <div className="meta" style={{ marginBottom: '6px' }}>
                     Attached media ({art.mediaId}):{' '}
                     {mediaGuard?.canDelete
-                      ? 'Unshared — will be permanently deleted with this article.'
+                      ? 'Currently unshared — fresh Firestore check will confirm before removing media.'
                       : `Shared with ${mediaGuard?.remainingArticleIds.length} other article(s) — media will be preserved.`}
+                  </div>
+                )}
+
+                {isPendingApproval && (
+                  <div className="sb-note-box" style={{ marginBottom: '10px', fontSize: '13px' }}>
+                    <strong>Awaiting Explicit Approval:</strong> Approve this request first before permanent deletion can run.
+                  </div>
+                )}
+
+                {isInProgress && (
+                  <div className="sb-note-box" style={{ marginBottom: '10px', fontSize: '13px' }}>
+                    <strong>Deletion In Progress:</strong> If a previous browser tab crashed mid-deletion, click Retry below to complete recovery idempotently.
                   </div>
                 )}
 
@@ -150,14 +204,26 @@ export function AdminPendingDeletion({
                   </div>
                 ) : (
                   <div className="sb-admin-item-actions">
-                    <button
-                      type="button"
-                      className="btn ghost sb-admin-touch-btn"
-                      disabled={busyId === art.id}
-                      onClick={() => void handleCancel(art)}
-                    >
-                      Cancel &amp; Retain Privately
-                    </button>
+                    {cls.canCancelDeletion && (
+                      <button
+                        type="button"
+                        className="btn ghost sb-admin-touch-btn"
+                        disabled={busyId === art.id}
+                        onClick={() => void handleCancel(art)}
+                      >
+                        Cancel &amp; Retain Privately
+                      </button>
+                    )}
+                    {isPendingApproval && (
+                      <button
+                        type="button"
+                        className="btn sb-admin-touch-btn"
+                        disabled={busyId === art.id}
+                        onClick={() => void handleApprove(art)}
+                      >
+                        Approve Permanent Deletion
+                      </button>
+                    )}
                     {canExecute && (
                       <button
                         type="button"
@@ -166,7 +232,9 @@ export function AdminPendingDeletion({
                         disabled={busyId === art.id}
                         onClick={() => setConfirmExecuteId(art.id)}
                       >
-                        {isPartialFailure ? 'Retry Permanent Deletion' : 'Execute Permanent Deletion'}
+                        {isPartialFailure || isInProgress
+                          ? 'Retry Permanent Deletion'
+                          : 'Execute Permanent Deletion'}
                       </button>
                     )}
                   </div>

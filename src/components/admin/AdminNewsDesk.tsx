@@ -28,6 +28,7 @@ import {
   extractReadableErrorMessage,
   extractTimestampMillis,
   formatRemainingDuration,
+  isDeletionQueueEditLocked,
   resolveDurationHours,
   sanitizeArticleSlug,
   validateArticleDraftInput,
@@ -306,8 +307,17 @@ export function AdminNewsDesk({
     return null;
   }
 
+  const isEditLocked = editingArticle ? isDeletionQueueEditLocked(editingArticle) : false;
+
   async function executeSave(targetMode: 'draft' | 'minor_edit' | 'publish') {
     if (savingRef.current || saving) return;
+    if (editingArticle && isDeletionQueueEditLocked(editingArticle)) {
+      const lockMsg =
+        'This article is currently in Pending Deletion. Cancel deletion in Section 8 first before saving edits or republishing.';
+      setLocalError(lockMsg);
+      onNotify({ tone: 'err', text: lockMsg });
+      return;
+    }
     setLocalError(null);
 
     const validationError = validateBeforeAction(targetMode);
@@ -364,16 +374,13 @@ export function AdminNewsDesk({
         }
         expiresAtMs = computeExpiresAtMs(nowMs, resolvedHours);
       } else if (targetMode === 'minor_edit' && editingArticle) {
-        // Minor corrections strictly preserve status, verification, retainedPrivate, and existing expiry!
+        // Minor corrections strictly preserve ID, slug, status, publishedAt, publishedAtMs, duration, and existing expiry!
         const preserved = applyMinorEditPreservingExpiry(editingArticle, {});
         nextStatus = editingArticle.status || 'Published';
-        if (publishedDateMode === 'preserve' && parsedHistoricalMs !== null && publishedDateIso !== originalDateIso) {
-          publishedAtMs = parsedHistoricalMs;
-          publishedAt = formatPublishedDateLabel(parsedHistoricalMs);
-        } else {
-          publishedAt = preserved.publishedAt || (preserved.publishedAtMs ? formatPublishedDateLabel(preserved.publishedAtMs) : undefined);
-          publishedAtMs = preserved.publishedAtMs ?? parsedHistoricalMs ?? null;
-        }
+        publishedAt =
+          preserved.publishedAt ||
+          (preserved.publishedAtMs ? formatPublishedDateLabel(preserved.publishedAtMs) : undefined);
+        publishedAtMs = preserved.publishedAtMs ?? parsedHistoricalMs ?? null;
         expiresAtMs = preserved.expiresAtMs ?? null;
         finalPreset = preserved.durationPreset || durationPreset;
         finalHours = preserved.durationHours || resolvedHours;
@@ -577,7 +584,15 @@ export function AdminNewsDesk({
           )}
         </div>
 
-        {editingArticle?.status === 'Published' && (
+        {isEditLocked && editingArticle && (
+          <div className="sb-admin-alert err" role="alert" style={{ marginBottom: '14px' }}>
+            <strong>Deletion Queue Edit Lock Active ({editingArticle.status}):</strong> This article is queued for
+            deletion (<code>{editingArticle.deletionStatus || 'pending_approval'}</code>) and cannot be edited or
+            republished from News Desk. Cancel deletion in <strong>8. Pending Deletion</strong> first.
+          </div>
+        )}
+
+        {editingArticle?.status === 'Published' && !isEditLocked && (
           <div className="sb-note-box" style={{ marginBottom: '14px' }}>
             <strong>Minor edit protection active:</strong> Saving minor edits keeps the current expiry
             countdown (<strong>{formatRemainingDuration(editingArticle.expiresAtMs)}</strong>)
@@ -980,7 +995,7 @@ export function AdminNewsDesk({
             <button
               type="button"
               className="btn ghost sb-admin-touch-btn"
-              disabled={saving}
+              disabled={saving || isEditLocked}
               onClick={() => void executeSave('minor_edit')}
             >
               Save Corrections (Keep Status &amp; Expiry)
@@ -989,7 +1004,7 @@ export function AdminNewsDesk({
           <button
             type="button"
             className="btn ghost sb-admin-touch-btn"
-            disabled={saving}
+            disabled={saving || isEditLocked}
             onClick={() => void executeSave('draft')}
           >
             {editingArticle ? 'Save as Draft' : 'Save Draft'}
@@ -997,8 +1012,9 @@ export function AdminNewsDesk({
           <button
             type="button"
             className="btn sb-admin-touch-btn"
-            disabled={saving}
+            disabled={saving || isEditLocked}
             onClick={() => {
+              if (isEditLocked) return;
               const validationError = validateBeforeAction('publish');
               if (validationError) {
                 setLocalError(validationError);

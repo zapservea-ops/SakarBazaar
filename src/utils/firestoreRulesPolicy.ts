@@ -1,6 +1,8 @@
 /**
- * Pure policy evaluator mirroring firestore.rules for automated security testing
+ * Pure TypeScript policy evaluator mirroring firestore.rules for automated unit testing
  * when JVM Firestore Emulator is unavailable in headless environments.
+ * NOTE (Safeguard H5): Passing unit tests here verifies TypeScript logic alignment,
+ * NOT live Firebase server rule evaluation or deployed security rules execution.
  */
 
 export interface PolicyAuthContext {
@@ -211,14 +213,63 @@ export function canDeleteMediaInFirestore(
   return !payloadStillExists;
 }
 
+export interface PolicyIpoRecord {
+  verificationStatus?: string;
+  status?: string;
+  isArchived?: boolean;
+  deletionStatus?: string;
+}
+
+export function isPolicyPublicIpo(ipo: PolicyIpoRecord): boolean {
+  return (
+    ipo.verificationStatus === 'verified' &&
+    ipo.isArchived === false &&
+    ipo.deletionStatus === 'none' &&
+    (ipo.status === 'Upcoming' ||
+      ipo.status === 'Open' ||
+      ipo.status === 'Closed' ||
+      ipo.status === 'Listed')
+  );
+}
+
+export function canPublicOrUserGetIpo(
+  auth: PolicyAuthContext | null,
+  ipoId: string,
+  ipo: PolicyIpoRecord,
+): boolean {
+  if (!isValidFirestoreDocId(ipoId)) return false;
+  if (isPolicyAuthorizedUser(auth)) return true;
+  return isPolicyPublicIpo(ipo);
+}
+
+export function canPublicOrUserListIpo(
+  auth: PolicyAuthContext | null,
+  ipo: PolicyIpoRecord,
+): boolean {
+  if (isPolicyAuthorizedUser(auth)) return true;
+  return isPolicyPublicIpo(ipo);
+}
+
 export function canDeleteIpoInFirestore(
   auth: PolicyAuthContext | null,
   ipoId: string,
-  verificationStatus?: string,
+  ipo: PolicyIpoRecord,
 ): boolean {
   if (!isValidFirestoreDocId(ipoId)) return false;
-  if (!isPolicyOwner(auth)) return false;
-  return verificationStatus !== 'verified';
+  if (!isPolicyAuthorizedUser(auth)) return false;
+  if (isPolicyPublicIpo(ipo)) return false;
+  return (
+    ipo.isArchived === true ||
+    ipo.status === 'Archived' ||
+    ipo.status === 'Unpublished' ||
+    ipo.status === 'Awaiting Verification' ||
+    ipo.status === 'Pending Deletion' ||
+    ipo.deletionStatus === 'pending_approval' ||
+    ipo.deletionStatus === 'approved' ||
+    ipo.verificationStatus === 'archived' ||
+    ipo.verificationStatus === 'unpublished' ||
+    ipo.verificationStatus === 'awaiting_verification'
+  );
 }
 
 export function canDeleteIpoSourceReviewInFirestore(

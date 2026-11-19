@@ -4,6 +4,7 @@ import { ARTICLES_CATALOG } from '../../data/sampleData';
 import {
   approveArticleForPermanentDeletion,
   migrateLegacyStaticArticles,
+  requestArticleDeletionApproval,
   saveEditorialArticle,
   syncMediaVisibilityAcrossArticles,
 } from '../../lib/firebase';
@@ -29,6 +30,7 @@ import {
   type ManageStatusFilter,
 } from '../../utils/historicalNews';
 import {
+  classifyArticleLifecycle,
   computeExpiresAtMs,
   extendDurationFromNowOrExpiry,
   extractReadableErrorMessage,
@@ -330,6 +332,55 @@ export function AdminManageNews({
     }
   }
 
+  async function handleRequestDelete(item: ManagedNewsItem) {
+    const art = item.doc;
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
+    setBusyId(art.id);
+    try {
+      const existsInFirestore = data.articles.some((a) => a.id === art.id);
+      if (!existsInFirestore) {
+        const { id: _id, createdAt: _ca, updatedAt: _ua, ...cleanArt } = art;
+        await saveEditorialArticle({
+          articleId: art.id,
+          isNew: true,
+          previousStatus: art.status,
+          action: 'retain_private',
+          payload: {
+            ...cleanArt,
+            status: 'Retained',
+            retainedPrivate: true,
+            createdByUid: userUid,
+          },
+        });
+      }
+
+      await requestArticleDeletionApproval(art);
+      if (art.mediaId) {
+        const updated = getUpdatedArticlesSnapshot(art.id, {
+          ...art,
+          status: 'Pending Deletion',
+          deletionStatus: 'pending_approval',
+        });
+        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+      }
+      await onRefresh();
+      await onPublicContentChanged();
+      onNotify({
+        tone: 'ok',
+        text: `Requested deletion approval for "${art.enHeadline || art.title}". It now appears in Pending Deletion awaiting approval.`,
+      });
+    } catch (err) {
+      onNotify({
+        tone: 'err',
+        text: extractReadableErrorMessage(err, 'Unable to request deletion approval.'),
+      });
+    } finally {
+      busyIdsRef.current.delete(art.id);
+      setBusyId(null);
+    }
+  }
+
   async function handleApproveDelete(item: ManagedNewsItem) {
     const art = item.doc;
     if (busyIdsRef.current.has(art.id)) return;
@@ -367,7 +418,7 @@ export function AdminManageNews({
       await onPublicContentChanged();
       onNotify({
         tone: 'ok',
-        text: `Queued "${art.enHeadline || art.title}" in Pending Deletion (Section 8) for final permanent removal.`,
+        text: `Approved & queued "${art.enHeadline || art.title}" in Pending Deletion (Section 8) for final permanent removal.`,
       });
     } catch (err) {
       onNotify({
@@ -592,9 +643,10 @@ export function AdminManageNews({
             {filteredItems.map((item) => {
               const art = item.doc;
               const isStatic = item.origin === 'static';
+              const cls = classifyArticleLifecycle(art, nowMs);
               const isLive = isStatic
                 ? art.status === 'Published' || art.status === 'Awaiting Verification'
-                : isArticlePubliclyVisible(art, nowMs);
+                : cls.isPublic;
               const expired = !isStatic && isArticleExpired(art, nowMs);
               const customAdd = customHoursById[art.id] ?? 168;
               const republishPreset = republishPresetById[art.id] ?? art.durationPreset ?? '30d';
@@ -612,10 +664,12 @@ export function AdminManageNews({
                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
                       <span
                         className={`pill ${
-                          isLive ? 'sb-pill-teal' : 'sb-pill-muted'
+                          isLive ? 'sb-pill-teal' : cls.inDeletionQueue ? 'sb-pill-amber' : 'sb-pill-muted'
                         }`}
                       >
-                        {expired && art.status === 'Published' ? 'Expired' : art.status}
+                        {isStatic
+                          ? art.status
+                          : cls.statusLabel}
                       </span>
                       <span className="pill">{art.category}</span>
                       <span
@@ -810,15 +864,28 @@ export function AdminManageNews({
                       </div>
                     )}
 
-                    <button
-                      type="button"
-                      className="btn ghost sb-admin-touch-btn"
-                      style={{ color: 'var(--down)' }}
-                      disabled={busyId === art.id}
-                      onClick={() => void handleApproveDelete(item)}
-                    >
-                      Queue Delete
-                    </button>
+                    {!cls.inDeletionQueue && !cls.isDeleted && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn ghost sb-admin-touch-btn"
+                          style={{ color: 'var(--down)' }}
+                          disabled={busyId === art.id}
+                          onClick={() => void handleRequestDelete(item)}
+                        >
+                          Request Delete Approval
+                        </button>
+                        <button
+                          type="button"
+                          className="btn ghost sb-admin-touch-btn"
+                          style={{ color: 'var(--down)' }}
+                          disabled={busyId === art.id}
+                          onClick={() => void handleApproveDelete(item)}
+                        >
+                          Approve Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                 </article>
               );
@@ -946,8 +1013,9 @@ export function AdminManageNews({
               <div>
                 <h2 style={{ margin: 0 }}>Legacy News Migration Preview</h2>
                 <p className="sb-sec-sub">
-                  Idempotent transfer of built-in static articles into Firestore while strictly preserving IDs,
-                  slugs, and original publication dates. Zero duplicate public entries will be created.
+                  Manual Owner/Publisher dry-run preview &amp; idempotent transfer of built-in legacy editorial
+                  articles only (never runs automatically and never imports sample IPOs). Preserves original IDs,
+                  slugs, and publication dates.
                 </p>
               </div>
               <button

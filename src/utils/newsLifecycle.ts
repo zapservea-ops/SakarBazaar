@@ -1,5 +1,6 @@
 import type {
   AdminRole,
+  ArticleLifecycleClassification,
   ArticleRecord,
   DeletionStatus,
   DurationPreset,
@@ -54,80 +55,223 @@ export function extendDurationFromNowOrExpiry(
   return base + safeAdd;
 }
 
+export interface ArticleLifecycleInput {
+  status?: EditorialWorkflowStatus;
+  editorialStatus?: EditorialWorkflowStatus;
+  expiresAtMs?: number | null;
+  deletionStatus?: DeletionStatus;
+}
+
+/**
+ * Authoritative single-source lifecycle & deletion precedence matrix used across
+ * public selectors, dashboard KPIs, Manage News, Expired/Archive, News Desk edit locks,
+ * and Pending Deletion workflows.
+ *
+ * Precedence (highest -> lowest):
+ * 1. deleted                  (status == Deleted OR deletionStatus == deleted)
+ * 2. deletion_in_progress     (status == Deletion In Progress OR deletionStatus == in_progress)
+ * 3. deletion_partial_failure (deletionStatus == partial_failure)
+ * 4. deletion_approved        (deletionStatus == approved)
+ * 5. deletion_pending_approval(deletionStatus == pending_approval OR status/editorialStatus == Pending Deletion)
+ * 6. expired_private          (Expired/Retained/Archived OR Published with elapsed expiresAtMs <= nowMs)
+ * 7. published_live           (Published with active or unscheduled expiry)
+ * 8. draft_review             (Draft / Awaiting Verification / Verified / unknown)
+ */
+export function classifyArticleLifecycle(
+  article: ArticleLifecycleInput,
+  nowMs: number = Date.now(),
+): ArticleLifecycleClassification {
+  const effectiveStatus = article.status ?? article.editorialStatus;
+  const del = article.deletionStatus;
+
+  if (effectiveStatus === 'Deleted' || del === 'deleted') {
+    return {
+      stage: 'deleted',
+      precedenceRank: 1,
+      statusLabel: 'Deleted',
+      isDeleted: true,
+      inDeletionQueue: false,
+      isPublic: false,
+      isExpiredArchive: false,
+      isDraftReview: false,
+      canEdit: false,
+      canRequestDeletion: false,
+      canApproveDeletion: false,
+      canExecuteDeletion: false,
+      canRetryDeletion: false,
+      canCancelDeletion: false,
+    };
+  }
+
+  if (effectiveStatus === 'Deletion In Progress' || del === 'in_progress') {
+    return {
+      stage: 'deletion_in_progress',
+      precedenceRank: 2,
+      statusLabel: 'Deletion In Progress',
+      isDeleted: false,
+      inDeletionQueue: true,
+      isPublic: false,
+      isExpiredArchive: false,
+      isDraftReview: false,
+      canEdit: false,
+      canRequestDeletion: false,
+      canApproveDeletion: false,
+      canExecuteDeletion: true,
+      canRetryDeletion: true,
+      canCancelDeletion: false,
+    };
+  }
+
+  if (del === 'partial_failure') {
+    return {
+      stage: 'deletion_partial_failure',
+      precedenceRank: 3,
+      statusLabel: 'Partial Deletion Failure',
+      isDeleted: false,
+      inDeletionQueue: true,
+      isPublic: false,
+      isExpiredArchive: false,
+      isDraftReview: false,
+      canEdit: false,
+      canRequestDeletion: false,
+      canApproveDeletion: false,
+      canExecuteDeletion: true,
+      canRetryDeletion: true,
+      canCancelDeletion: true,
+    };
+  }
+
+  if (del === 'approved') {
+    return {
+      stage: 'deletion_approved',
+      precedenceRank: 4,
+      statusLabel: 'Approved for Permanent Deletion',
+      isDeleted: false,
+      inDeletionQueue: true,
+      isPublic: false,
+      isExpiredArchive: false,
+      isDraftReview: false,
+      canEdit: false,
+      canRequestDeletion: false,
+      canApproveDeletion: false,
+      canExecuteDeletion: true,
+      canRetryDeletion: false,
+      canCancelDeletion: true,
+    };
+  }
+
+  if (del === 'pending_approval' || effectiveStatus === 'Pending Deletion') {
+    return {
+      stage: 'deletion_pending_approval',
+      precedenceRank: 5,
+      statusLabel: 'Pending Deletion Approval',
+      isDeleted: false,
+      inDeletionQueue: true,
+      isPublic: false,
+      isExpiredArchive: false,
+      isDraftReview: false,
+      canEdit: false,
+      canRequestDeletion: false,
+      canApproveDeletion: true,
+      canExecuteDeletion: false,
+      canRetryDeletion: false,
+      canCancelDeletion: true,
+    };
+  }
+
+  const hasFiniteExpiry =
+    typeof article.expiresAtMs === 'number' && Number.isFinite(article.expiresAtMs);
+  const elapsedExpired =
+    effectiveStatus === 'Published' && hasFiniteExpiry && nowMs >= (article.expiresAtMs as number);
+
+  if (
+    effectiveStatus === 'Expired' ||
+    effectiveStatus === 'Retained' ||
+    effectiveStatus === 'Archived' ||
+    elapsedExpired
+  ) {
+    return {
+      stage: 'expired_private',
+      precedenceRank: 6,
+      statusLabel: elapsedExpired ? 'Expired' : (effectiveStatus ?? 'Expired'),
+      isDeleted: false,
+      inDeletionQueue: false,
+      isPublic: false,
+      isExpiredArchive: true,
+      isDraftReview: false,
+      canEdit: true,
+      canRequestDeletion: true,
+      canApproveDeletion: true,
+      canExecuteDeletion: false,
+      canRetryDeletion: false,
+      canCancelDeletion: false,
+    };
+  }
+
+  const staticAwaitingVisible =
+    article.status === undefined && article.editorialStatus === 'Awaiting Verification';
+  if (effectiveStatus === 'Published' || staticAwaitingVisible) {
+    return {
+      stage: 'published_live',
+      precedenceRank: 7,
+      statusLabel: effectiveStatus ?? 'Published',
+      isDeleted: false,
+      inDeletionQueue: false,
+      isPublic: true,
+      isExpiredArchive: false,
+      isDraftReview: false,
+      canEdit: true,
+      canRequestDeletion: true,
+      canApproveDeletion: true,
+      canExecuteDeletion: false,
+      canRetryDeletion: false,
+      canCancelDeletion: false,
+    };
+  }
+
+  return {
+    stage: 'draft_review',
+    precedenceRank: 8,
+    statusLabel: effectiveStatus ?? 'Draft',
+    isDeleted: false,
+    inDeletionQueue: false,
+    isPublic: false,
+    isExpiredArchive: false,
+    isDraftReview: true,
+    canEdit: true,
+    canRequestDeletion: true,
+    canApproveDeletion: true,
+    canExecuteDeletion: false,
+    canRetryDeletion: false,
+    canCancelDeletion: false,
+  };
+}
+
 export function isArticleExpired(
-  article: {
-    status?: EditorialWorkflowStatus;
-    expiresAtMs?: number | null;
-    deletionStatus?: DeletionStatus;
-  },
+  article: ArticleLifecycleInput,
   nowMs: number = Date.now(),
 ): boolean {
-  if (
-    article.status === 'Expired' ||
-    article.status === 'Retained' ||
-    article.status === 'Pending Deletion' ||
-    article.status === 'Deletion In Progress' ||
-    article.status === 'Deleted' ||
-    article.status === 'Archived'
-  ) {
-    return true;
-  }
-  if (article.deletionStatus && article.deletionStatus !== 'none') {
-    return true;
-  }
-  if (
-    article.status === 'Published' &&
-    typeof article.expiresAtMs === 'number' &&
-    Number.isFinite(article.expiresAtMs) &&
-    nowMs >= article.expiresAtMs
-  ) {
-    return true;
-  }
-  return false;
+  const cls = classifyArticleLifecycle(article, nowMs);
+  return cls.isExpiredArchive || cls.inDeletionQueue || cls.isDeleted;
 }
 
 export function isArticleExpiringSoon(
-  article: {
-    status?: EditorialWorkflowStatus;
-    expiresAtMs?: number | null;
-    deletionStatus?: DeletionStatus;
-  },
+  article: ArticleLifecycleInput,
   nowMs: number = Date.now(),
   thresholdHours: number = DEFAULT_EXPIRING_SOON_HOURS,
 ): boolean {
-  if (article.status !== 'Published') return false;
-  if (article.deletionStatus && article.deletionStatus !== 'none') return false;
+  const cls = classifyArticleLifecycle(article, nowMs);
+  if (cls.stage !== 'published_live' || article.status !== 'Published') return false;
   if (typeof article.expiresAtMs !== 'number' || !Number.isFinite(article.expiresAtMs)) return false;
   const remainingMs = article.expiresAtMs - nowMs;
   return remainingMs > 0 && remainingMs <= thresholdHours * MS_PER_HOUR;
 }
 
 export function isArticlePubliclyVisible(
-  article: {
-    status?: EditorialWorkflowStatus;
-    editorialStatus?: EditorialWorkflowStatus;
-    expiresAtMs?: number | null;
-    deletionStatus?: DeletionStatus;
-  },
+  article: ArticleLifecycleInput,
   nowMs: number = Date.now(),
 ): boolean {
-  if (article.status !== undefined) {
-    if (article.status !== 'Published') return false;
-  } else if (article.editorialStatus !== undefined) {
-    if (
-      article.editorialStatus !== 'Published' &&
-      article.editorialStatus !== 'Awaiting Verification'
-    ) {
-      return false;
-    }
-  } else {
-    return false;
-  }
-  if (article.deletionStatus && article.deletionStatus !== 'none') return false;
-  if (typeof article.expiresAtMs === 'number' && Number.isFinite(article.expiresAtMs)) {
-    return article.expiresAtMs > nowMs;
-  }
-  return true;
+  return classifyArticleLifecycle(article, nowMs).isPublic;
 }
 
 export interface BilingualArticleDraftInput {
@@ -399,6 +543,43 @@ export interface DeletionWorkflowTransition {
   nextDeletionStatus: DeletionStatus;
 }
 
+export function evaluateDeletionRequest(
+  role: AdminRole,
+  currentArticle?: ArticleLifecycleInput,
+): DeletionWorkflowTransition {
+  if (role !== 'owner' && role !== 'publisher') {
+    return {
+      allowed: false,
+      reason: 'Only an authorized Owner or Publisher may request article deletion.',
+      nextStatus: currentArticle?.status ?? 'Retained',
+      nextDeletionStatus: currentArticle?.deletionStatus ?? 'none',
+    };
+  }
+  if (currentArticle) {
+    const cls = classifyArticleLifecycle(currentArticle);
+    if (cls.stage === 'deletion_in_progress' || cls.isDeleted) {
+      return {
+        allowed: false,
+        reason: 'Article is already deleted or deletion is currently executing.',
+        nextStatus: currentArticle.status ?? 'Deletion In Progress',
+        nextDeletionStatus: currentArticle.deletionStatus ?? 'in_progress',
+      };
+    }
+    if (cls.stage === 'deletion_approved') {
+      return {
+        allowed: true,
+        nextStatus: 'Pending Deletion',
+        nextDeletionStatus: 'approved',
+      };
+    }
+  }
+  return {
+    allowed: true,
+    nextStatus: 'Pending Deletion',
+    nextDeletionStatus: 'pending_approval',
+  };
+}
+
 export function evaluateDeletionApproval(
   role: AdminRole,
   currentDeletionStatus?: DeletionStatus,
@@ -411,6 +592,14 @@ export function evaluateDeletionApproval(
       nextDeletionStatus: currentDeletionStatus ?? 'none',
     };
   }
+  if (currentDeletionStatus === 'in_progress' || currentDeletionStatus === 'deleted') {
+    return {
+      allowed: false,
+      reason: 'Permanent deletion is already running or completed.',
+      nextStatus: currentDeletionStatus === 'deleted' ? 'Deleted' : 'Deletion In Progress',
+      nextDeletionStatus: currentDeletionStatus,
+    };
+  }
   return {
     allowed: true,
     nextStatus: 'Pending Deletion',
@@ -418,43 +607,56 @@ export function evaluateDeletionApproval(
   };
 }
 
-export function isArticleInDeletionQueue(article: {
-  status?: EditorialWorkflowStatus;
-  deletionStatus?: DeletionStatus;
-}): boolean {
-  if (
-    article.status === 'Pending Deletion' ||
-    article.status === 'Deletion In Progress'
-  ) {
-    return true;
+export function evaluateDeletionCancellation(
+  role: AdminRole,
+  currentArticle: ArticleLifecycleInput,
+): DeletionWorkflowTransition {
+  if (role !== 'owner' && role !== 'publisher') {
+    return {
+      allowed: false,
+      reason: 'Only an authorized Owner or Publisher may cancel a deletion request.',
+      nextStatus: currentArticle.status ?? 'Pending Deletion',
+      nextDeletionStatus: currentArticle.deletionStatus ?? 'none',
+    };
   }
-  return (
-    article.deletionStatus === 'pending_approval' ||
-    article.deletionStatus === 'approved' ||
-    article.deletionStatus === 'in_progress' ||
-    article.deletionStatus === 'partial_failure'
-  );
+  const cls = classifyArticleLifecycle(currentArticle);
+  if (!cls.canCancelDeletion) {
+    return {
+      allowed: false,
+      reason:
+        cls.stage === 'deletion_in_progress'
+          ? 'Deletion is actively executing and cannot be cancelled mid-flight.'
+          : 'Article is not in a cancellable deletion queue state.',
+      nextStatus: currentArticle.status ?? 'Retained',
+      nextDeletionStatus: currentArticle.deletionStatus ?? 'none',
+    };
+  }
+  return {
+    allowed: true,
+    nextStatus: 'Retained',
+    nextDeletionStatus: 'none',
+  };
 }
 
-export function isArticlePermanentlyDeleted(article: {
-  status?: EditorialWorkflowStatus;
-  deletionStatus?: DeletionStatus;
-}): boolean {
-  return article.status === 'Deleted' || article.deletionStatus === 'deleted';
+export function isArticleInDeletionQueue(article: ArticleLifecycleInput): boolean {
+  return classifyArticleLifecycle(article).inDeletionQueue;
+}
+
+export function isArticlePermanentlyDeleted(article: ArticleLifecycleInput): boolean {
+  return classifyArticleLifecycle(article).isDeleted;
+}
+
+export function isDeletionQueueEditLocked(article: ArticleLifecycleInput): boolean {
+  const cls = classifyArticleLifecycle(article);
+  return cls.inDeletionQueue || cls.isDeleted;
 }
 
 export function canRetryPermanentDeletion(
-  article: { status?: EditorialWorkflowStatus; deletionStatus?: DeletionStatus },
+  article: ArticleLifecycleInput,
   role: AdminRole,
 ): boolean {
   if (role !== 'owner' && role !== 'publisher') return false;
-  return (
-    article.deletionStatus === 'approved' ||
-    article.deletionStatus === 'partial_failure' ||
-    article.deletionStatus === 'in_progress' ||
-    article.status === 'Pending Deletion' ||
-    article.status === 'Deletion In Progress'
-  );
+  return classifyArticleLifecycle(article).canExecuteDeletion;
 }
 
 export function extractReadableErrorMessage(err: unknown, fallback: string = 'Operation failed.'): string {

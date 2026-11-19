@@ -52,6 +52,7 @@ import {
   markClientMarketDataStale,
   resolveFrontendRefreshIntervalMs,
 } from '../utils/marketPolling';
+import { isIpoPubliclyVisible } from '../utils/ipoLifecycle';
 
 const THEME_KEY = 'sb-theme';
 const LANG_KEY = 'sb-lang';
@@ -340,7 +341,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     setRemoteVerifiedIpos(remoteIposRes.items);
     setPublicDataDiagnostics((prev) => {
       const nextMsg =
-        !prev.articlesOk || !prev.overridesOk
+        !prev.articlesOk || (!prev.overridesOk && prev.message)
           ? prev.message
           : remoteIposRes.errorMessage;
       return {
@@ -386,7 +387,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
     const seenSlugs = new Set<string>();
     const merged: IpoRow[] = [];
     for (const remote of remoteVerifiedIpos) {
-      if (!seenSlugs.has(remote.slug)) {
+      if (isIpoPubliclyVisible(remote) && !seenSlugs.has(remote.slug)) {
         seenSlugs.add(remote.slug);
         merged.push(remote);
       }

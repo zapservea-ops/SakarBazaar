@@ -436,6 +436,10 @@ export const IPO_STATUS_LABELS: Record<LanguageCode, Record<IpoStatus, string>> 
     Upcoming: 'Upcoming',
     Closed: 'Recently closed',
     Listed: 'Listed',
+    Archived: 'Archived',
+    Unpublished: 'Unpublished',
+    'Pending Deletion': 'Pending Deletion',
+    Deleted: 'Deleted',
   },
   hi: {
     'Awaiting Verification': 'आधिकारिक सत्यापन लंबित',
@@ -444,6 +448,10 @@ export const IPO_STATUS_LABELS: Record<LanguageCode, Record<IpoStatus, string>> 
     Upcoming: 'आगामी',
     Closed: 'हाल में बंद',
     Listed: 'सूचीबद्ध',
+    Archived: 'संग्रहीत (निजी)',
+    Unpublished: 'अप्रकाशित',
+    'Pending Deletion': 'हटाने हेतु लंबित',
+    Deleted: 'स्थायी रूप से हटाया गया',
   },
 };
 

@@ -13,7 +13,9 @@ import {
   canListPublicCatalog,
   canMutateOrDeleteAuditLog,
   canPublicOrUserGetArticle,
+  canPublicOrUserGetIpo,
   canPublicOrUserListArticle,
+  canPublicOrUserListIpo,
   canReadPaidCampaign,
   canWriteAuthorizedEmailOrSettings,
   canWritePublicLegacyOverrides,
@@ -247,11 +249,35 @@ test('Firestore Rules Policy — /publicCatalog/legacyOverrides & deletion guard
   assert.equal(canDeleteMediaInFirestore(OWNER, 'med-1', false), true);
   assert.equal(canDeleteMediaInFirestore(REVOKED_ADMIN, 'med-1', false), false);
 
-  // IPO / IPO Source Review / Paid Campaign deletions are Owner-only with state protections
-  assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', 'awaiting_verification'), false);
-  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', 'verified'), false);
-  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', 'awaiting_verification'), true);
+  // IPO deletion allows BOTH Owner and Publisher for any non-public IPO (even if verificationStatus === 'verified' + archived/unpublished),
+  // while blocking deletion of active public IPOs and unauthorized users.
+  const publicOpenIpo = { verificationStatus: 'verified', status: 'Open', isArchived: false, deletionStatus: 'none' };
+  const archivedStillVerifiedIpo = { verificationStatus: 'verified', status: 'Archived', isArchived: true, deletionStatus: 'none' };
+  const unpublishedIpoDoc = { verificationStatus: 'unpublished', status: 'Unpublished', isArchived: false, deletionStatus: 'none' };
+  const archivedFlaggedIpo = { verificationStatus: 'archived', status: 'Archived', isArchived: true, deletionStatus: 'none' };
+  const awaitingIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Awaiting Verification', isArchived: false, deletionStatus: 'none' };
+  const pendingDeleteIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Pending Deletion', isArchived: false, deletionStatus: 'pending_approval' };
+  const approvedDeleteIpoDoc = { verificationStatus: 'awaiting_verification', status: 'Pending Deletion', isArchived: false, deletionStatus: 'approved' };
 
+  for (const deletableIpo of [
+    archivedStillVerifiedIpo,
+    unpublishedIpoDoc,
+    archivedFlaggedIpo,
+    awaitingIpoDoc,
+    pendingDeleteIpoDoc,
+    approvedDeleteIpoDoc,
+  ]) {
+    assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', deletableIpo), true);
+    assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', deletableIpo), true);
+    assert.equal(canDeleteIpoInFirestore(ANON, 'ipo-1', deletableIpo), false);
+    assert.equal(canDeleteIpoInFirestore(RANDOM_VERIFIED_USER, 'ipo-1', deletableIpo), false);
+    assert.equal(canDeleteIpoInFirestore(REVOKED_ADMIN, 'ipo-1', deletableIpo), false);
+  }
+  // Public IPOs MUST remain protected from direct deletion for both roles
+  assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', publicOpenIpo), false);
+  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', publicOpenIpo), false);
+
+  // Security-sensitive / Owner-only delete boundaries remain strictly Owner-only
   assert.equal(canDeleteIpoSourceReviewInFirestore(PUBLISHER, 'rev-1'), false);
   assert.equal(canDeleteIpoSourceReviewInFirestore(OWNER, 'rev-1'), true);
 
@@ -260,5 +286,44 @@ test('Firestore Rules Policy — /publicCatalog/legacyOverrides & deletion guard
   assert.equal(canDeletePaidCampaignInFirestore(OWNER, 'camp-1', 'Cancelled'), true);
   assert.equal(canDeletePaidCampaignInFirestore(OWNER, 'camp-1', 'Completed'), true);
 });
+
+test('Firestore Rules Policy — IPO public get & list boundaries have strict parity and fail closed for incomplete/non-public dossiers', () => {
+  const publicOpenIpo = { verificationStatus: 'verified', status: 'Open', isArchived: false, deletionStatus: 'none' };
+  const publicListedIpo = { verificationStatus: 'verified', status: 'Listed', isArchived: false, deletionStatus: 'none' };
+  const incompleteLegacyIpo = { verificationStatus: 'verified', status: 'Listed' }; // missing required isArchived/deletionStatus -> fails closed on both get & list
+  const awaitingIpo = { verificationStatus: 'awaiting_verification', status: 'Awaiting Verification', isArchived: false, deletionStatus: 'none' };
+  const archivedIpo = { verificationStatus: 'archived', status: 'Archived', isArchived: true, deletionStatus: 'none' };
+  const unpublishedIpo = { verificationStatus: 'unpublished', status: 'Unpublished', isArchived: false, deletionStatus: 'none' };
+  const pendingDeleteIpo = { verificationStatus: 'awaiting_verification', status: 'Pending Deletion', isArchived: false, deletionStatus: 'pending_approval' };
+  const inconsistentArchivedVerified = { verificationStatus: 'verified', status: 'Archived', isArchived: true, deletionStatus: 'none' };
+  const inconsistentUnpublishedVerified = { verificationStatus: 'verified', status: 'Unpublished', isArchived: false, deletionStatus: 'none' };
+  const inconsistentPendingDeleteVerified = { verificationStatus: 'verified', status: 'Pending Deletion', isArchived: false, deletionStatus: 'pending_approval' };
+  const inconsistentDeletedVerified = { verificationStatus: 'verified', status: 'Deleted', isArchived: false, deletionStatus: 'deleted' };
+
+  assert.equal(canPublicOrUserGetIpo(ANON, 'ipo-live-1', publicOpenIpo), true);
+  assert.equal(canPublicOrUserListIpo(ANON, publicOpenIpo), true);
+  assert.equal(canPublicOrUserGetIpo(ANON, 'ipo-live-2', publicListedIpo), true);
+  assert.equal(canPublicOrUserListIpo(ANON, publicListedIpo), true);
+
+  for (const hiddenIpo of [
+    incompleteLegacyIpo,
+    awaitingIpo,
+    archivedIpo,
+    unpublishedIpo,
+    pendingDeleteIpo,
+    inconsistentArchivedVerified,
+    inconsistentUnpublishedVerified,
+    inconsistentPendingDeleteVerified,
+    inconsistentDeletedVerified,
+  ]) {
+    assert.equal(canPublicOrUserGetIpo(ANON, 'ipo-hidden-1', hiddenIpo), false);
+    assert.equal(canPublicOrUserListIpo(ANON, hiddenIpo), false);
+    assert.equal(canPublicOrUserGetIpo(RANDOM_VERIFIED_USER, 'ipo-hidden-1', hiddenIpo), false);
+    assert.equal(canPublicOrUserListIpo(RANDOM_VERIFIED_USER, hiddenIpo), false);
+    assert.equal(canPublicOrUserGetIpo(PUBLISHER, 'ipo-hidden-1', hiddenIpo), true);
+    assert.equal(canPublicOrUserListIpo(OWNER, hiddenIpo), true);
+  }
+});
+
 
 

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { MEDIA_ASSETS } from '../../data/editorialData';
 import {
   approveArticleForPermanentDeletion,
+  requestArticleDeletionApproval,
   saveEditorialArticle,
   syncMediaVisibilityAcrossArticles,
 } from '../../lib/firebase';
@@ -12,10 +13,10 @@ import {
   parseLegacyPublishedDateMs,
 } from '../../utils/historicalNews';
 import {
+  classifyArticleLifecycle,
   computeExpiresAtMs,
   extractReadableErrorMessage,
   extractTimestampMillis,
-  isArticleExpired,
   resolveDurationHours,
 } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
@@ -41,14 +42,7 @@ export function AdminExpiredArchive({
   const nowMs = Date.now();
 
   const expiredItems = data.articles.filter(
-    (art) =>
-      (art.status === 'Expired' ||
-        art.status === 'Retained' ||
-        art.status === 'Archived' ||
-        (art.status === 'Published' && isArticleExpired(art, nowMs))) &&
-      art.deletionStatus !== 'approved' &&
-      art.deletionStatus !== 'in_progress' &&
-      art.deletionStatus !== 'partial_failure',
+    (art) => classifyArticleLifecycle(art, nowMs).isExpiredArchive,
   );
 
   async function handleRetain(art: StoredArticleDoc) {
@@ -174,6 +168,34 @@ export function AdminExpiredArchive({
       });
     } catch (err) {
       onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Unable to restore article.') });
+    } finally {
+      busyIdsRef.current.delete(art.id);
+      setBusyId(null);
+    }
+  }
+
+  async function handleRequestDelete(art: StoredArticleDoc) {
+    if (busyIdsRef.current.has(art.id)) return;
+    busyIdsRef.current.add(art.id);
+    setBusyId(art.id);
+    try {
+      await requestArticleDeletionApproval(art);
+      if (art.mediaId) {
+        const updated = data.articles.map((a) =>
+          a.id === art.id
+            ? { ...a, status: 'Pending Deletion' as const, deletionStatus: 'pending_approval' as const }
+            : a,
+        );
+        await syncMediaVisibilityAcrossArticles(art.mediaId, updated);
+      }
+      await onRefresh();
+      await onPublicContentChanged();
+      onNotify({
+        tone: 'ok',
+        text: `Moved "${art.enHeadline || art.title}" to Pending Deletion (awaiting approval).`,
+      });
+    } catch (err) {
+      onNotify({ tone: 'err', text: extractReadableErrorMessage(err, 'Unable to request deletion approval.') });
     } finally {
       busyIdsRef.current.delete(art.id);
       setBusyId(null);
@@ -325,6 +347,14 @@ export function AdminExpiredArchive({
                     onClick={() => void handleRestore(art)}
                   >
                     Restore &amp; Publish
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost sb-admin-touch-btn"
+                    disabled={busyId === art.id}
+                    onClick={() => void handleRequestDelete(art)}
+                  >
+                    Request Deletion Approval
                   </button>
                   <button
                     type="button"

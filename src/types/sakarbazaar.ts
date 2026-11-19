@@ -17,7 +17,17 @@ export type HomepageNewsCategory = 'All' | 'Markets' | 'IPO' | 'Corporate' | 'Ec
 
 export type IpoSegment = 'Mainboard' | 'SME';
 
-export type IpoStatus = 'Awaiting Verification' | 'Proposed OFS' | 'Open' | 'Upcoming' | 'Closed' | 'Listed';
+export type IpoStatus =
+  | 'Awaiting Verification'
+  | 'Proposed OFS'
+  | 'Open'
+  | 'Upcoming'
+  | 'Closed'
+  | 'Listed'
+  | 'Archived'
+  | 'Unpublished'
+  | 'Pending Deletion'
+  | 'Deleted';
 
 export type VerificationStatus = 'awaiting_verification' | 'verified' | 'unverified';
 
@@ -43,6 +53,33 @@ export type DeletionStatus =
   | 'in_progress'
   | 'partial_failure'
   | 'deleted';
+
+export type ArticleLifecycleStage =
+  | 'deleted'
+  | 'deletion_in_progress'
+  | 'deletion_partial_failure'
+  | 'deletion_approved'
+  | 'deletion_pending_approval'
+  | 'expired_private'
+  | 'published_live'
+  | 'draft_review';
+
+export interface ArticleLifecycleClassification {
+  stage: ArticleLifecycleStage;
+  precedenceRank: number;
+  statusLabel: string;
+  isDeleted: boolean;
+  inDeletionQueue: boolean;
+  isPublic: boolean;
+  isExpiredArchive: boolean;
+  isDraftReview: boolean;
+  canEdit: boolean;
+  canRequestDeletion: boolean;
+  canApproveDeletion: boolean;
+  canExecuteDeletion: boolean;
+  canRetryDeletion: boolean;
+  canCancelDeletion: boolean;
+}
 
 import type {
   ExchangeSessionPhase,
@@ -230,7 +267,7 @@ export interface IpoRow {
   slug: string;
   segment: IpoSegment;
   status: IpoStatus;
-  verificationStatus: 'awaiting_verification' | 'verified' | 'proposed';
+  verificationStatus: 'awaiting_verification' | 'verified' | 'proposed' | 'unpublished' | 'archived';
   company: string;
   exchange?: string | null;
   issueSize: string | null;
@@ -465,10 +502,20 @@ export interface PaidCampaignRecord {
 
 export interface ManagedIpoRecord {
   id: string;
+  migrationKey?: string;
   companyName: string;
   slug: string;
   segment: IpoSegment;
-  status: 'Awaiting Verification' | 'Upcoming' | 'Open' | 'Closed' | 'Listed';
+  status:
+    | 'Awaiting Verification'
+    | 'Upcoming'
+    | 'Open'
+    | 'Closed'
+    | 'Listed'
+    | 'Archived'
+    | 'Unpublished'
+    | 'Pending Deletion'
+    | 'Deleted';
   issueSize?: string;
   priceBand?: string;
   lotSize?: string;
@@ -483,7 +530,10 @@ export interface ManagedIpoRecord {
   officialDocuments?: string[];
   sourceName?: string;
   sourceUrl?: string;
-  verificationStatus: 'awaiting_verification' | 'verified';
+  verificationStatus: 'awaiting_verification' | 'verified' | 'unpublished' | 'archived';
+  previousVerificationStatus?: 'awaiting_verification' | 'verified';
+  isArchived?: boolean;
+  deletionStatus?: 'none' | 'pending_approval' | 'approved' | 'deleted';
   lastVerifiedAt?: string;
   updatedByUid: string;
   createdAt?: unknown;
@@ -497,10 +547,100 @@ export interface IpoSourceDiffItem {
   detectedValue: string;
 }
 
+export type IpoIdentityMatchType =
+  | 'exact_id'
+  | 'exact_migration_key'
+  | 'exact_document_url'
+  | 'conflict_segment_difference'
+  | 'conflict_name_change_suspected'
+  | 'conflict_repeat_offering_candidate'
+  | 'conflict_potential_duplicate_name'
+  | 'no_match';
+
+export interface IpoConflictItem {
+  conflictType:
+    | 'segment_difference'
+    | 'name_change_suspected'
+    | 'repeat_offering_candidate'
+    | 'potential_duplicate_name'
+    | 'missing_migration_key'
+    | 'sample_or_fixture_excluded';
+  severity: 'blocking' | 'warning';
+  sourceOrigin: 'firestore' | 'static_catalog' | 'sebi_candidate';
+  recordId: string;
+  companyName: string;
+  segment: IpoSegment;
+  relatedRecordId?: string;
+  relatedCompanyName?: string;
+  relatedSegment?: IpoSegment;
+  recommendedAction: string;
+  reason: string;
+}
+
+export type IpoCatalogClassificationType =
+  | 'genuine_historical'
+  | 'genuine_current'
+  | 'demonstration_sample'
+  | 'unknown_review';
+
+export interface IpoCatalogRecordClassification {
+  recordId: string;
+  slug: string;
+  companyName: string;
+  segment: IpoSegment;
+  status: string;
+  verificationStatus?: IpoRow['verificationStatus'] | VerificationStatus;
+  openDate: string | null;
+  closeDate: string | null;
+  listingDate: string | null;
+  inPublicWebsite: boolean;
+  inManagementPreview: boolean;
+  classification: IpoCatalogClassificationType;
+  evidence: string;
+  publicRoutes: string[];
+  conflictStatus: 'none' | 'matched_firestore' | 'potential_duplicate' | 'needs_review';
+  relatedFirestoreIds: string[];
+  potentialDuplicateIds: string[];
+}
+
+export interface UnifiedIpoPreviewEntry {
+  origin: 'firestore' | 'static_catalog';
+  id: string;
+  slug: string;
+  companyName: string;
+  segment: IpoSegment;
+  status: string;
+  verificationStatus: string;
+  openDate: string | null;
+  closeDate: string | null;
+  listingDate: string | null;
+  isPubliclyVisible: boolean;
+  classification: IpoCatalogClassificationType | 'firestore_managed';
+  potentialDuplicateIds: string[];
+  notes: string;
+}
+
+export interface IpoConflictReport {
+  generatedAt: string;
+  totalFirestoreIpos: number;
+  totalStaticIpos: number;
+  blockingConflictCount: number;
+  warningCount: number;
+  sampleExcludedCount: number;
+  genuineCatalogCount?: number;
+  unknownReviewCount?: number;
+  items: IpoConflictItem[];
+  recordClassifications?: IpoCatalogRecordClassification[];
+  unifiedPreview?: UnifiedIpoPreviewEntry[];
+}
+
 export interface IpoSourceReviewRecord {
   id: string;
   companyName: string;
   targetIpoId?: string;
+  migrationKey?: string;
+  matchType?: IpoIdentityMatchType;
+  conflictWarning?: string;
   segment: IpoSegment;
   reviewStatus: 'Needs Review' | 'Approved' | 'Rejected';
   sourceName: string;
@@ -625,11 +765,65 @@ export interface BackupRestoreFailure {
   error: string;
 }
 
+export type BackupConflictPolicy = 'skip_existing' | 'fail_on_conflict' | 'overwrite_existing';
+
+export interface BackupTargetIdentity {
+  projectId: string;
+  firestoreDatabaseId: string;
+}
+
+export interface BackupCollectionConflictPreview {
+  collection: 'articles' | 'media' | 'mediaPayloads' | 'paidCampaigns' | 'ipos';
+  inBackupCount: number;
+  existingConflictIds: string[];
+  newCreateIds: string[];
+}
+
+export interface BackupRestorePreview {
+  valid: boolean;
+  sourceProjectId: string | null;
+  sourceDatabaseId: string | null;
+  targetProjectId: string;
+  targetDatabaseId: string;
+  identityMatchesSource: boolean | null;
+  conflictPolicy: BackupConflictPolicy;
+  expectedCounts: {
+    articles: number;
+    media: number;
+    mediaPayloads: number;
+    paidCampaigns: number;
+    ipos: number;
+    legacyOverrides: number;
+  };
+  conflictsByCollection: BackupCollectionConflictPreview[];
+  totalExistingConflicts: number;
+  skippedCollections: Array<{
+    collection: string;
+    countInBackup: number;
+    category: BackupCollectionCategory;
+    reason: string;
+  }>;
+  exclusions: string[];
+  errors: string[];
+  warnings: string[];
+}
+
 export interface BackupRestoreReport {
   startedAt: string;
   completedAt: string;
+  targetProjectId?: string;
+  targetDatabaseId?: string;
+  conflictPolicy?: BackupConflictPolicy;
   nonAtomicWarning: string;
   restoredByCollection: {
+    articles: number;
+    media: number;
+    mediaPayloads: number;
+    paidCampaigns: number;
+    ipos: number;
+    legacyOverrides: number;
+  };
+  skippedExistingByCollection?: {
     articles: number;
     media: number;
     mediaPayloads: number;
@@ -657,6 +851,8 @@ export interface PublicDataDiagnostics {
 export interface SakarBazaarBackupBundle {
   schemaVersion: '1.0.0';
   app: 'SakarBazaar';
+  sourceProjectId?: string;
+  sourceDatabaseId?: string;
   exportedAt: string;
   exportedByUid: string;
   exportedByEmail: string;

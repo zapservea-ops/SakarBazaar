@@ -14,11 +14,9 @@ import type {
   StoredMediaAssetDoc,
 } from '../types/sakarbazaar';
 import {
+  classifyArticleLifecycle,
   computeExpiresAtMs,
   extractTimestampMillis,
-  isArticleExpired,
-  isArticleInDeletionQueue,
-  isArticlePermanentlyDeleted,
   isArticlePubliclyVisible,
   MS_PER_HOUR,
   resolveDurationHours,
@@ -484,8 +482,9 @@ export function filterHistoricalAndCurrentNews(
 
   return items.filter((item) => {
     const art = item.doc;
+    const lifecycle = classifyArticleLifecycle(art, nowMs);
     // All deletion-queue states (pending_approval, approved, in_progress, partial_failure) belong exclusively to Section 8
-    if (isArticleInDeletionQueue(art) || isArticlePermanentlyDeleted(art)) {
+    if (lifecycle.inDeletionQueue || lifecycle.isDeleted) {
       return false;
     }
 
@@ -500,28 +499,15 @@ export function filterHistoricalAndCurrentNews(
     const visible =
       item.origin === 'static'
         ? art.status === 'Published' || art.status === 'Awaiting Verification'
-        : isArticlePubliclyVisible(art, nowMs);
-    const expired =
-      item.origin === 'static' ? false : isArticleExpired(art, nowMs);
+        : lifecycle.isPublic;
 
     if (criteria.statusFilter === 'live' && !visible) return false;
-    if (
-      criteria.statusFilter === 'drafts' &&
-      art.status !== 'Draft' &&
-      art.status !== 'Awaiting Verification' &&
-      art.status !== 'Verified'
-    ) {
+    if (criteria.statusFilter === 'drafts' && !lifecycle.isDraftReview) {
       return false;
     }
     if (
       criteria.statusFilter === 'historical' &&
-      !(
-        art.status === 'Expired' ||
-        art.status === 'Retained' ||
-        art.status === 'Archived' ||
-        (art.status === 'Published' && expired) ||
-        item.origin === 'static'
-      )
+      !(lifecycle.isExpiredArchive || item.origin === 'static')
     ) {
       return false;
     }
@@ -773,4 +759,82 @@ export function filterPublicArticlesWithOverrides(
   }
 
   return combined;
+}
+
+export interface LegacyOverridesReadResolution {
+  overrides: LegacyOverridesRecord | null;
+  nextCacheToPersist?: LegacyOverridesRecord;
+  ok: boolean;
+  readPermitted: boolean;
+  source:
+    | 'server'
+    | 'missing_doc_cache'
+    | 'missing_doc_empty'
+    | 'permission_denied_cache'
+    | 'error_cache';
+  errorMessage: string | null;
+}
+
+/**
+ * Resolves authoritative Firestore legacyOverrides vs browser localStorage fallback:
+ * - Authoritative server doc replaces stale localStorage cache completely.
+ * - Missing override doc preserves existing localStorage cache rather than wiping suppressions.
+ * - Permission denied / transient read failures keep existing cache without failing public homepage render.
+ */
+export function resolveLegacyOverridesReadResult(params: {
+  serverExists: boolean;
+  serverData?: Partial<LegacyOverridesRecord> | null;
+  cached: LegacyOverridesRecord | null;
+  error?: unknown;
+  isPermissionDenied?: boolean;
+}): LegacyOverridesReadResolution {
+  if (params.error !== undefined && params.error !== null) {
+    if (params.isPermissionDenied) {
+      return {
+        overrides: params.cached,
+        ok: false,
+        readPermitted: false,
+        source: 'permission_denied_cache',
+        errorMessage: null,
+      };
+    }
+    return {
+      overrides: params.cached,
+      ok: false,
+      readPermitted: true,
+      source: 'error_cache',
+      errorMessage: 'Public catalog override controls could not be synced cleanly.',
+    };
+  }
+
+  if (!params.serverExists || !params.serverData) {
+    return {
+      overrides: params.cached,
+      ok: true,
+      readPermitted: true,
+      source: params.cached ? 'missing_doc_cache' : 'missing_doc_empty',
+      errorMessage: null,
+    };
+  }
+
+  const raw = params.serverData;
+  const normalized: LegacyOverridesRecord = {
+    suppressedArticleIds: Array.isArray(raw.suppressedArticleIds)
+      ? raw.suppressedArticleIds.filter((s): s is string => typeof s === 'string')
+      : [],
+    suppressedSlugs: Array.isArray(raw.suppressedSlugs)
+      ? raw.suppressedSlugs.filter((s): s is string => typeof s === 'string')
+      : [],
+    updatedByUid: typeof raw.updatedByUid === 'string' ? raw.updatedByUid : undefined,
+    updatedAt: raw.updatedAt,
+  };
+
+  return {
+    overrides: normalized,
+    nextCacheToPersist: normalized,
+    ok: true,
+    readPermitted: true,
+    source: 'server',
+    errorMessage: null,
+  };
 }

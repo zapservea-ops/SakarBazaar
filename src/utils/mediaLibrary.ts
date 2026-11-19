@@ -233,6 +233,42 @@ export function canSafelyDeleteMediaAsset(
 }
 
 /**
+ * Merges a newly attached article ID into a media document's associatedArticleIds array
+ * atomically inside transactions so concurrent article photo attachments never drop prior links.
+ */
+export function mergeMediaAssociatedArticleId(
+  existingIds: string[] | undefined,
+  articleId: string,
+): string[] {
+  const set = new Set((existingIds ?? []).filter((id) => typeof id === 'string' && id.trim().length > 0));
+  if (articleId.trim()) {
+    set.add(articleId.trim());
+  }
+  return Array.from(set).slice(0, 50);
+}
+
+/**
+ * Resolves all candidate article IDs that may reference a media asset across both
+ * authoritative articles and media.associatedArticleIds for transactional verification before delete.
+ */
+export function collectCandidateReferencingArticleIds(params: {
+  mediaId: string;
+  allArticles: Array<Pick<StoredArticleDoc, 'id' | 'mediaId' | 'status' | 'deletionStatus'>>;
+  recordedAssociatedIds?: string[];
+  excludingArticleId?: string;
+}): string[] {
+  const fromArticles = getRemainingArticleReferencesForMedia(
+    params.mediaId,
+    params.allArticles,
+    params.excludingArticleId,
+  );
+  const fromMediaDoc = (params.recordedAssociatedIds ?? []).filter(
+    (id) => typeof id === 'string' && id.trim().length > 0 && id !== params.excludingArticleId,
+  );
+  return Array.from(new Set([...fromArticles, ...fromMediaDoc])).slice(0, 50);
+}
+
+/**
  * Computes whether a media asset should be publicly readable and its latest active expiry timestamp
  * based on all articles currently referencing it.
  */

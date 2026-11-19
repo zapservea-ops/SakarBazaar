@@ -181,19 +181,24 @@ service cloud.firestore {
     function isValidIpoRecord(data) {
       return data.keys().hasAll([
           'companyName', 'slug', 'segment', 'status',
-          'verificationStatus', 'updatedByUid', 'createdAt', 'updatedAt'
+          'verificationStatus', 'isArchived', 'deletionStatus',
+          'updatedByUid', 'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'companyName', 'slug', 'segment', 'status', 'issueSize', 'priceBand', 'lotSize',
+          'migrationKey', 'companyName', 'slug', 'segment', 'status', 'issueSize', 'priceBand', 'lotSize',
           'filingDate', 'openingDate', 'closingDate', 'allotmentDate', 'listingDate',
           'sellingShareholder', 'offerType', 'summary', 'officialDocuments', 'sourceName',
-          'sourceUrl', 'verificationStatus', 'lastVerifiedAt', 'updatedByUid',
-          'createdAt', 'updatedAt'
+          'sourceUrl', 'verificationStatus', 'previousVerificationStatus', 'isArchived',
+          'deletionStatus', 'lastVerifiedAt', 'updatedByUid', 'createdAt', 'updatedAt'
         ]) &&
+        (!('migrationKey' in data) || (data.migrationKey is string && data.migrationKey.size() <= 120)) &&
         data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 160 &&
         data.slug is string && data.slug.size() >= 3 && data.slug.size() <= 160 && data.slug.matches('^[a-z0-9\\-]+$') &&
         data.segment in ['Mainboard', 'SME'] &&
-        data.status in ['Awaiting Verification', 'Upcoming', 'Open', 'Closed', 'Listed'] &&
+        data.status in [
+          'Awaiting Verification', 'Upcoming', 'Open', 'Closed', 'Listed',
+          'Archived', 'Unpublished', 'Pending Deletion', 'Deleted'
+        ] &&
         (!('issueSize' in data) || (data.issueSize is string && data.issueSize.size() <= 100)) &&
         (!('priceBand' in data) || (data.priceBand is string && data.priceBand.size() <= 100)) &&
         (!('lotSize' in data) || (data.lotSize is string && data.lotSize.size() <= 100)) &&
@@ -208,11 +213,26 @@ service cloud.firestore {
         (!('officialDocuments' in data) || isValidStringList(data.officialDocuments, 6)) &&
         (!('sourceName' in data) || (data.sourceName is string && data.sourceName.size() <= 160)) &&
         (!('sourceUrl' in data) || (data.sourceUrl is string && data.sourceUrl.size() <= 500)) &&
-        data.verificationStatus in ['awaiting_verification', 'verified'] &&
+        data.verificationStatus in ['awaiting_verification', 'verified', 'unpublished', 'archived'] &&
+        (!('previousVerificationStatus' in data) || data.previousVerificationStatus in ['awaiting_verification', 'verified']) &&
+        data.isArchived is bool &&
+        data.deletionStatus in ['none', 'pending_approval', 'approved', 'deleted'] &&
+        (data.verificationStatus != 'verified' || (
+          data.isArchived == false &&
+          data.status in ['Upcoming', 'Open', 'Closed', 'Listed'] &&
+          data.deletionStatus == 'none'
+        )) &&
         (!('lastVerifiedAt' in data) || (data.lastVerifiedAt is string && data.lastVerifiedAt.size() <= 64)) &&
         isValidId(data.updatedByUid) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
+    }
+
+    function isPublicIpo(data) {
+      return data.verificationStatus == 'verified' &&
+        data.isArchived == false &&
+        data.deletionStatus == 'none' &&
+        data.status in ['Upcoming', 'Open', 'Closed', 'Listed'];
     }
 
     function isValidIpoSourceReview(data) {
@@ -221,12 +241,16 @@ service cloud.firestore {
           'createdByUid', 'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'companyName', 'targetIpoId', 'segment', 'reviewStatus', 'sourceName',
-          'sourceUrl', 'checkedAt', 'diffs', 'detectedSummary', 'reviewedByUid',
-          'reviewedByEmail', 'reviewedAt', 'createdByUid', 'createdAt', 'updatedAt'
+          'companyName', 'targetIpoId', 'migrationKey', 'matchType', 'conflictWarning',
+          'segment', 'reviewStatus', 'sourceName', 'sourceUrl', 'checkedAt', 'diffs',
+          'detectedSummary', 'reviewedByUid', 'reviewedByEmail', 'reviewedAt',
+          'createdByUid', 'createdAt', 'updatedAt'
         ]) &&
         data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 160 &&
         (!('targetIpoId' in data) || (data.targetIpoId is string && data.targetIpoId.size() <= 128)) &&
+        (!('migrationKey' in data) || (data.migrationKey is string && data.migrationKey.size() <= 120)) &&
+        (!('matchType' in data) || (data.matchType is string && data.matchType.size() <= 64)) &&
+        (!('conflictWarning' in data) || (data.conflictWarning is string && data.conflictWarning.size() <= 500)) &&
         data.segment in ['Mainboard', 'SME'] &&
         data.reviewStatus in ['Needs Review', 'Approved', 'Rejected'] &&
         data.sourceName is string && data.sourceName.size() >= 2 && data.sourceName.size() <= 160 &&
@@ -472,8 +496,8 @@ service cloud.firestore {
     }
 
     match /ipos/{ipoId} {
-      allow get: if isValidId(ipoId) && (existing().verificationStatus == 'verified' || isAuthorizedUser());
-      allow list: if resource.data.verificationStatus == 'verified' || isAuthorizedUser();
+      allow get: if isValidId(ipoId) && (isAuthorizedUser() || isPublicIpo(existing()));
+      allow list: if isAuthorizedUser() || isPublicIpo(resource.data);
       allow create: if isValidId(ipoId) && isAuthorizedUser() && isValidIpoRecord(incoming()) &&
         incoming().updatedByUid == request.auth.uid &&
         incoming().createdAt == request.time &&
@@ -482,7 +506,14 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().updatedByUid == request.auth.uid;
-      allow delete: if isValidId(ipoId) && isOwner() && existing().verificationStatus != 'verified';
+      allow delete: if isValidId(ipoId) && isAuthorizedUser() &&
+        !isPublicIpo(existing()) &&
+        (
+          existing().isArchived == true ||
+          existing().status in ['Archived', 'Unpublished', 'Awaiting Verification', 'Pending Deletion'] ||
+          existing().deletionStatus in ['pending_approval', 'approved'] ||
+          existing().verificationStatus in ['archived', 'unpublished', 'awaiting_verification']
+        );
     }
 
     match /ipoSourceReviews/{reviewId} {

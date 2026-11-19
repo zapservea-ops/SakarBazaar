@@ -186,10 +186,23 @@ export function AdminIpoReviews({
                   <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     <span className="pill sb-pill-amber">Needs Review</span>
                     <span className="pill">{rev.segment}</span>
+                    {rev.matchType && (
+                      <span className="pill sb-pill-muted">{rev.matchType}</span>
+                    )}
                   </div>
                   <span className="meta">Source: {rev.sourceName}</span>
                 </div>
                 <h3>{rev.companyName}</h3>
+                {rev.migrationKey && (
+                  <div className="meta" style={{ marginBottom: '6px' }}>
+                    Migration Key: <code>{rev.migrationKey}</code>
+                  </div>
+                )}
+                {rev.conflictWarning && (
+                  <div className="sb-admin-alert err" style={{ marginBottom: '10px' }}>
+                    <strong>Identity Conflict Guard:</strong> {rev.conflictWarning}
+                  </div>
+                )}
                 {rev.detectedSummary && (
                   <p className="meta" style={{ margin: '0 0 10px' }}>{rev.detectedSummary}</p>
                 )}

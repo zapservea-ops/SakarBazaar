@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
+  ACTIVE_FIREBASE_TARGET,
   exportFullBackupBundle,
   restoreBackupBundleToFirestore,
   saveSystemSettings,
@@ -9,6 +10,7 @@ import {
 import type {
   AdminUserRecord,
   AuthorizedEmailRecord,
+  BackupConflictPolicy,
   BackupRestoreReport,
   DurationPreset,
   SakarBazaarBackupBundle,
@@ -21,6 +23,8 @@ import {
 import {
   BACKUP_AUDIT_LOG_EXPORT_LIMIT,
   BACKUP_COLLECTION_SCOPE,
+  buildBackupRestorePreview,
+  isProductionDatabaseTarget,
   NON_ATOMIC_RESTORE_WARNING,
   validateBackupBundle,
   type BackupValidationReport,
@@ -75,9 +79,29 @@ export function AdminSettings({
     null,
   );
   const [validationReport, setValidationReport] = useState<BackupValidationReport | null>(null);
+  const [confirmedProjectId, setConfirmedProjectId] = useState('');
+  const [confirmedDatabaseId, setConfirmedDatabaseId] = useState('');
+  const [conflictPolicy, setConflictPolicy] = useState<BackupConflictPolicy>('skip_existing');
   const [restoring, setRestoring] = useState(false);
   const [restoreReport, setRestoreReport] = useState<BackupRestoreReport | null>(null);
   const actionLocksRef = useRef<Record<string, boolean>>({});
+  const isProdTarget = isProductionDatabaseTarget(ACTIVE_FIREBASE_TARGET);
+
+  const restorePreview = useMemo(() => {
+    if (!pendingRestoreBundle) return null;
+    return buildBackupRestorePreview({
+      bundle: pendingRestoreBundle,
+      targetIdentity: ACTIVE_FIREBASE_TARGET,
+      conflictPolicy,
+      existingIds: {
+        articles: new Set(data.articles.map((a) => a.id)),
+        media: new Set(data.media.map((m) => m.id)),
+        mediaPayloads: new Set(Object.keys(data.payloadMap)),
+        paidCampaigns: new Set(data.paidCampaigns.map((c) => c.id)),
+        ipos: new Set(data.ipos.map((i) => i.id)),
+      },
+    });
+  }, [pendingRestoreBundle, conflictPolicy, data.articles, data.media, data.payloadMap, data.paidCampaigns, data.ipos]);
 
   async function handleExportBackup() {
     if (actionLocksRef.current.export) return;
@@ -144,7 +168,11 @@ export function AdminSettings({
     actionLocksRef.current.restore = true;
     setRestoring(true);
     try {
-      const report = await restoreBackupBundleToFirestore(pendingRestoreBundle);
+      const report = await restoreBackupBundleToFirestore(pendingRestoreBundle, {
+        confirmedProjectId,
+        confirmedDatabaseId,
+        conflictPolicy,
+      });
       setRestoreReport(report);
       setPendingRestoreBundle(null);
       setValidationReport(null);
@@ -161,8 +189,8 @@ export function AdminSettings({
         tone: report.failed.length > 0 ? 'err' : 'ok',
         text:
           report.failed.length > 0
-            ? `Partial restore finished: ${totalRestored} restored, ${report.failed.length} record(s) failed — inspect the Restore Report below.`
-            : `Owner restore complete: restored ${totalRestored} records across content & operational collections.`,
+            ? `Restore finished with alerts: ${totalRestored} restored, ${report.failed.length} failed/aborted — inspect the Restore Report below.`
+            : `Owner restore complete (${conflictPolicy}): ${totalRestored} written cleanly.`,
       });
     } catch (err) {
       onNotify({
@@ -369,10 +397,23 @@ export function AdminSettings({
 
         {permissions.canRestoreBackup ? (
           <div className="sb-admin-subpanel" style={{ marginTop: '14px' }}>
-            <h3>Owner-Only Backup Restore (Dry-Run Validation + Merge)</h3>
+            <h3>Owner-Only Backup Restore (Dry-Run Preview + Identity Verification)</h3>
             <p className="meta" style={{ marginTop: 0 }}>
               {NON_ATOMIC_RESTORE_WARNING}
             </p>
+            <div className="sb-note-box" style={{ marginBottom: '12px' }}>
+              <strong>Active Target Database:</strong> Project <code>{ACTIVE_FIREBASE_TARGET.projectId}</code> · DB{' '}
+              <code>{ACTIVE_FIREBASE_TARGET.firestoreDatabaseId}</code>{' '}
+              {isProdTarget && (
+                <span className="pill sb-pill-amber" style={{ marginLeft: '6px' }}>
+                  PRODUCTION READ-ONLY GUARD ACTIVE
+                </span>
+              )}
+              <div className="meta" style={{ marginTop: '4px' }}>
+                Never test restoration against the production database. Verify target identity below before running any restore.
+              </div>
+            </div>
+
             <label className="sb-form-field">
               <span>Upload SakarBazaar Backup JSON File</span>
               <input
@@ -382,40 +423,116 @@ export function AdminSettings({
               />
             </label>
 
-            {validationReport && (
-              <div className={`sb-admin-alert ${validationReport.valid ? 'ok' : 'err'}`} style={{ marginTop: '10px' }}>
-                {validationReport.valid ? (
-                  <div>
-                    <strong>Valid SakarBazaar v1.0.0 Backup Detected:</strong>{' '}
-                    {validationReport.summary.articles} articles · {validationReport.summary.mediaPayloads} photos ·{' '}
-                    {validationReport.summary.ipos} IPOs · {validationReport.summary.paidCampaigns} paid records.
-                    {validationReport.warnings.length > 0 && (
-                      <div className="meta" style={{ marginTop: '4px' }}>
-                        Warnings: {validationReport.warnings.join(' | ')}
-                      </div>
-                    )}
-                    <div style={{ marginTop: '10px' }}>
-                      <button
-                        type="button"
-                        className="btn sb-admin-touch-btn"
-                        disabled={restoring}
-                        onClick={() => void handleApplyRestore()}
-                      >
-                        {restoring ? 'Restoring Records…' : 'Confirm & Restore Backup to Firestore'}
-                      </button>
+            {validationReport && !validationReport.valid && (
+              <div className="sb-admin-alert err" style={{ marginTop: '10px' }}>
+                <strong>Backup Validation Failed:</strong> {validationReport.errors.join(' ')}
+              </div>
+            )}
+
+            {validationReport?.valid && restorePreview && (
+              <div className="sb-admin-subpanel" style={{ marginTop: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
+                  <strong>Dry-Run Restore Preview (v1.0.0)</strong>
+                  <span className="pill sb-pill-teal">Integrity Verified</span>
+                </div>
+                <div className="meta" style={{ marginBottom: '8px' }}>
+                  Source Backup: <code>{restorePreview.sourceProjectId || 'Unspecified'}</code> /{' '}
+                  <code>{restorePreview.sourceDatabaseId || 'Unspecified'}</code> · Existing Conflicts Detected:{' '}
+                  <strong>{restorePreview.totalExistingConflicts}</strong>
+                </div>
+
+                <div className="sb-admin-list" style={{ marginBottom: '10px' }}>
+                  {restorePreview.conflictsByCollection.map((c) => (
+                    <div className="sb-admin-list-row" key={c.collection}>
+                      <strong>{c.collection}</strong>
+                      <span className="meta">
+                        Backup: {c.inBackupCount} · New Creates: {c.newCreateIds.length} · Existing Conflicts:{' '}
+                        {c.existingConflictIds.length}
+                      </span>
                     </div>
-                  </div>
-                ) : (
-                  <div>
-                    <strong>Backup Validation Failed:</strong> {validationReport.errors.join(' ')}
+                  ))}
+                </div>
+
+                <div className="sb-note-box" style={{ marginBottom: '10px' }}>
+                  <strong>Exclusions ({restorePreview.exclusions.length}):</strong>
+                  <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
+                    {restorePreview.exclusions.map((ex, i) => (
+                      <li key={i} className="meta">{ex}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                {restorePreview.warnings.length > 0 && (
+                  <div className="sb-admin-alert err" style={{ marginBottom: '10px' }}>
+                    <strong>Warnings:</strong> {restorePreview.warnings.join(' | ')}
                   </div>
                 )}
+
+                <div className="sb-form-grid">
+                  <label className="sb-form-field">
+                    <span>Confirm Target Project ID</span>
+                    <input
+                      type="text"
+                      value={confirmedProjectId}
+                      onChange={(e) => setConfirmedProjectId(e.target.value)}
+                      placeholder={ACTIVE_FIREBASE_TARGET.projectId}
+                    />
+                  </label>
+                  <label className="sb-form-field">
+                    <span>Confirm Target Database ID</span>
+                    <input
+                      type="text"
+                      value={confirmedDatabaseId}
+                      onChange={(e) => setConfirmedDatabaseId(e.target.value)}
+                      placeholder={ACTIVE_FIREBASE_TARGET.firestoreDatabaseId}
+                    />
+                  </label>
+                </div>
+
+                <label className="sb-form-field" style={{ maxWidth: '420px' }}>
+                  <span>Existing Record Conflict Policy</span>
+                  <select
+                    value={conflictPolicy}
+                    onChange={(e) => setConflictPolicy(e.target.value as BackupConflictPolicy)}
+                  >
+                    <option value="skip_existing">Skip Existing Records (Non-Destructive Default)</option>
+                    <option value="fail_on_conflict">Fail Cleanly on Any Existing Conflict</option>
+                    <option value="overwrite_existing">Overwrite Existing Documents</option>
+                  </select>
+                </label>
+
+                {isProdTarget && (
+                  <div className="sb-admin-alert err" role="status" style={{ margin: '8px 0 12px' }}>
+                    <strong>Production Database Protected:</strong> Automated/UI backup restore is unconditionally blocked on{' '}
+                    <code>{ACTIVE_FIREBASE_TARGET.projectId}</code> / <code>{ACTIVE_FIREBASE_TARGET.firestoreDatabaseId}</code>.
+                    Execute restore verification only against an isolated test project or local Firestore Emulator.
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="btn sb-admin-touch-btn"
+                  disabled={
+                    restoring ||
+                    isProdTarget ||
+                    confirmedProjectId.trim() !== ACTIVE_FIREBASE_TARGET.projectId ||
+                    confirmedDatabaseId.trim() !== ACTIVE_FIREBASE_TARGET.firestoreDatabaseId
+                  }
+                  onClick={() => void handleApplyRestore()}
+                >
+                  {restoring ? 'Restoring Records…' : 'Confirm & Restore Backup to Firestore'}
+                </button>
               </div>
             )}
 
             {restoreReport && (
               <div className="sb-note-box" style={{ marginTop: '12px' }} role="status">
                 <strong>Last Backup Restore Report ({restoreReport.completedAt}):</strong>
+                <div className="meta" style={{ marginTop: '4px' }}>
+                  Target: <code>{restoreReport.targetProjectId || ACTIVE_FIREBASE_TARGET.projectId}</code> /{' '}
+                  <code>{restoreReport.targetDatabaseId || ACTIVE_FIREBASE_TARGET.firestoreDatabaseId}</code> · Policy:{' '}
+                  <strong>{restoreReport.conflictPolicy ?? 'skip_existing'}</strong>
+                </div>
                 <div className="meta" style={{ marginTop: '4px' }}>
                   Restored: Articles {restoreReport.restoredByCollection.articles} · Media{' '}
                   {restoreReport.restoredByCollection.media} · Payloads{' '}
@@ -424,6 +541,15 @@ export function AdminSettings({
                   {restoreReport.restoredByCollection.ipos} · Legacy Overrides{' '}
                   {restoreReport.restoredByCollection.legacyOverrides}
                 </div>
+                {restoreReport.skippedExistingByCollection && (
+                  <div className="meta" style={{ marginTop: '4px' }}>
+                    Skipped Existing Conflicts: Articles {restoreReport.skippedExistingByCollection.articles} · Media{' '}
+                    {restoreReport.skippedExistingByCollection.media} · Payloads{' '}
+                    {restoreReport.skippedExistingByCollection.mediaPayloads} · Paid Campaigns{' '}
+                    {restoreReport.skippedExistingByCollection.paidCampaigns} · IPOs{' '}
+                    {restoreReport.skippedExistingByCollection.ipos}
+                  </div>
+                )}
                 <div style={{ marginTop: '8px' }}>
                   <strong>Skipped Collections ({restoreReport.skippedCollections.length}):</strong>
                   <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
@@ -436,7 +562,7 @@ export function AdminSettings({
                 </div>
                 {restoreReport.failed.length > 0 && (
                   <div className="sb-admin-alert err" style={{ marginTop: '8px' }}>
-                    <strong>Failed Documents ({restoreReport.failed.length}):</strong>
+                    <strong>Failed / Aborted Documents ({restoreReport.failed.length}):</strong>
                     <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
                       {restoreReport.failed.map((f, idx) => (
                         <li key={`${f.collection}-${f.id}-${idx}`}>
