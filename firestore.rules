@@ -37,44 +37,30 @@ service cloud.firestore {
         request.auth.token.email.lower() == 'jeetsheetalpuri@gmail.com';
     }
 
-    function isEmailExplicitlyRevoked() {
+    function isEmailAllowlisted() {
       return isVerifiedUser() &&
         request.auth.token.email is string &&
         exists(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())) &&
-        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.active == false;
+        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.active == true &&
+        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.role in ['owner', 'publisher'];
     }
 
-    function isEmailExplicitlyNotOwner() {
-      return isVerifiedUser() &&
-        request.auth.token.email is string &&
-        exists(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())) &&
-        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.role != 'owner';
+    function isEmailAllowlistedAsOwner() {
+      return isEmailAllowlisted() &&
+        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.role == 'owner';
     }
 
     function isOwner() {
       return isVerifiedUser() && (
         isBootstrappedOwner() ||
-        (!isEmailExplicitlyRevoked() &&
-          !isEmailExplicitlyNotOwner() &&
-          exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role in ['owner', 'admin'])
+        isEmailAllowlistedAsOwner()
       );
-    }
-
-    function isEmailAllowlisted() {
-      return isVerifiedUser() &&
-        request.auth.token.email is string &&
-        exists(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())) &&
-        get(/databases/$(database)/documents/authorizedEmails/$(request.auth.token.email.lower())).data.active == true;
     }
 
     function isAuthorizedUser() {
       return isVerifiedUser() && (
         isBootstrappedOwner() ||
-        (!isEmailExplicitlyRevoked() && (
-          exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-          isEmailAllowlisted()
-        ))
+        isEmailAllowlisted()
       );
     }
 
@@ -396,6 +382,15 @@ service cloud.firestore {
         data.createdAt is timestamp;
     }
 
+    function isValidLegacyOverrides(data) {
+      return data.keys().hasAll(['suppressedArticleIds', 'suppressedSlugs', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['suppressedArticleIds', 'suppressedSlugs', 'updatedByUid', 'updatedAt']) &&
+        isValidStringList(data.suppressedArticleIds, 200) &&
+        isValidStringList(data.suppressedSlugs, 200) &&
+        isValidId(data.updatedByUid) &&
+        data.updatedAt is timestamp;
+    }
+
     match /admins/{userId} {
       allow get: if isValidId(userId) && ((isVerifiedUser() && request.auth.uid == userId) || isOwner());
       allow list: if isOwner();
@@ -471,7 +466,9 @@ service cloud.firestore {
         incoming().createdByUid == existing().createdByUid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time;
-      allow delete: if isValidId(articleId) && isAuthorizedUser();
+      allow delete: if isValidId(articleId) && isAuthorizedUser() &&
+        existing().status in ['Pending Deletion', 'Deletion In Progress'] &&
+        existing().deletionStatus in ['approved', 'in_progress', 'partial_failure'];
     }
 
     match /ipos/{ipoId} {
@@ -485,7 +482,7 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         incoming().updatedByUid == request.auth.uid;
-      allow delete: if isValidId(ipoId) && isAuthorizedUser();
+      allow delete: if isValidId(ipoId) && isOwner() && existing().verificationStatus != 'verified';
     }
 
     match /ipoSourceReviews/{reviewId} {
@@ -498,7 +495,7 @@ service cloud.firestore {
         incoming().createdByUid == existing().createdByUid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time;
-      allow delete: if isValidId(reviewId) && isAuthorizedUser();
+      allow delete: if isValidId(reviewId) && isOwner();
     }
 
     match /marketInstruments/{instrumentId} {
@@ -528,7 +525,8 @@ service cloud.firestore {
       allow update: if isValidId(mediaId) && isAuthorizedUser() && isValidMediaAsset(incoming()) &&
         incoming().uploadedByUid == existing().uploadedByUid &&
         incoming().createdAt == existing().createdAt;
-      allow delete: if isValidId(mediaId) && isAuthorizedUser();
+      allow delete: if isValidId(mediaId) && isAuthorizedUser() &&
+        !exists(/databases/$(database)/documents/mediaPayloads/$(mediaId));
     }
 
     match /mediaPayloads/{mediaId} {
@@ -561,7 +559,8 @@ service cloud.firestore {
         incoming().createdByUid == existing().createdByUid &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time;
-      allow delete: if isValidId(campaignId) && isAuthorizedUser();
+      allow delete: if isValidId(campaignId) && isOwner() &&
+        existing().internalStatus in ['Cancelled', 'Completed', 'Planned'];
     }
 
     match /auditLogs/{logId} {
@@ -578,6 +577,18 @@ service cloud.firestore {
       allow create: if isValidId(submissionId) && isValidContactSubmission(incoming()) &&
         incoming().createdAt == request.time;
       allow update, delete: if isValidId(submissionId) && isOwner();
+    }
+
+    match /publicCatalog/{catalogId} {
+      allow get: if isValidId(catalogId) && (catalogId == 'legacyOverrides' || isAuthorizedUser());
+      allow list: if isAuthorizedUser();
+      allow create, update: if isValidId(catalogId) &&
+        catalogId == 'legacyOverrides' &&
+        isAuthorizedUser() &&
+        isValidLegacyOverrides(incoming()) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(catalogId) && isOwner();
     }
   }
 }

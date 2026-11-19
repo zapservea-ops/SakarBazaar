@@ -1,6 +1,10 @@
 import type {
   AuditLogRecord,
   AuthorizedEmailRecord,
+  BackupCollectionScopeInfo,
+  BackupRestoreFailure,
+  BackupRestoreReport,
+  LegacyOverridesRecord,
   ManagedIpoRecord,
   IpoSourceReviewRecord,
   PaidCampaignRecord,
@@ -11,6 +15,142 @@ import type {
   SystemSettingsRecord,
 } from '../types/sakarbazaar';
 import { MAX_FIRESTORE_DATA_URL_LENGTH } from './mediaLibrary';
+
+export const BACKUP_AUDIT_LOG_EXPORT_LIMIT = 200;
+
+export const BACKUP_COLLECTION_SCOPE: BackupCollectionScopeInfo[] = [
+  {
+    key: 'articles',
+    label: 'Editorial Articles (/articles)',
+    category: 'content',
+    exported: true,
+    restored: true,
+    restoreNote: 'Restored record-by-record with schema allowlist; immutable creator/timestamp fields preserved on existing records.',
+  },
+  {
+    key: 'media',
+    label: 'Media Metadata (/media)',
+    category: 'content',
+    exported: true,
+    restored: true,
+    restoreNote: 'Restored for images and YouTube metadata (raw video binaries stay outside Firestore on YouTube/local archive).',
+  },
+  {
+    key: 'mediaPayloads',
+    label: 'Compressed Photographs (/mediaPayloads)',
+    category: 'content',
+    exported: true,
+    restored: true,
+    restoreNote: 'Restored alongside /media; subject to Firestore 1 MB Spark document limits.',
+  },
+  {
+    key: 'paidCampaigns',
+    label: 'Paid Disclosure Campaigns (/paidCampaigns)',
+    category: 'operational',
+    exported: true,
+    restored: true,
+    restoreNote: 'Restored as operational campaign disclosures linked to articles.',
+  },
+  {
+    key: 'ipos',
+    label: 'IPO Dossiers (/ipos)',
+    category: 'content',
+    exported: true,
+    restored: true,
+    restoreNote: 'Restored for verified/proposed IPO schedule tracking.',
+  },
+  {
+    key: 'legacyOverrides',
+    label: 'Public Legacy Catalog Overrides (/publicCatalog/legacyOverrides)',
+    category: 'operational',
+    exported: true,
+    restored: true,
+    restoreNote: 'Restored so previously unpublished/deleted static articles remain suppressed publicly.',
+  },
+  {
+    key: 'ipoSourceReviews',
+    label: 'SEBI IPO Review Queue (/ipoSourceReviews)',
+    category: 'operational',
+    exported: true,
+    restored: false,
+    restoreNote: 'Exported for historical audit only; NOT automatically overwritten during restore—re-run SEBI Check in Admin if needed.',
+  },
+  {
+    key: 'auditLogs',
+    label: 'Audit Logs (/auditLogs)',
+    category: 'operational',
+    exported: true,
+    restored: false,
+    exportCapNote: `Capped at latest ${BACKUP_AUDIT_LOG_EXPORT_LIMIT} records per export to stay within Firebase Spark read quotas.`,
+    restoreNote: 'Append-only operational trail; never overwritten or replayed on restore.',
+  },
+  {
+    key: 'authorizedEmails',
+    label: 'Authorized User Allowlist (/authorizedEmails)',
+    category: 'security_sensitive',
+    exported: true,
+    restored: false,
+    restoreNote: 'Security-sensitive RBAC configuration; excluded from automated restore—manage manually in Section 9.',
+  },
+  {
+    key: 'systemSettings',
+    label: 'System Settings (/systemSettings)',
+    category: 'security_sensitive',
+    exported: true,
+    restored: false,
+    restoreNote: 'Security-sensitive platform defaults; excluded from automated restore—manage manually in Section 9.',
+  },
+];
+
+export const NON_ATOMIC_RESTORE_WARNING =
+  'Firestore backup restoration runs sequentially record-by-record rather than inside one atomic cross-collection transaction. Partial failures are isolated and reported per document for manual follow-up.';
+
+export function buildInitialBackupRestoreReport(
+  bundle: SakarBazaarBackupBundle,
+  startedAt: string = new Date().toISOString(),
+): BackupRestoreReport {
+  return {
+    startedAt,
+    completedAt: startedAt,
+    nonAtomicWarning: NON_ATOMIC_RESTORE_WARNING,
+    restoredByCollection: {
+      articles: 0,
+      media: 0,
+      mediaPayloads: 0,
+      paidCampaigns: 0,
+      ipos: 0,
+      legacyOverrides: 0,
+    },
+    skippedCollections: [
+      {
+        collection: 'ipoSourceReviews',
+        countInBackup: bundle.data.ipoSourceReviews?.length ?? 0,
+        category: 'operational',
+        reason: 'SEBI diff review queue is exported for archive only; skipped during restore to preserve current editorial review decisions.',
+      },
+      {
+        collection: 'auditLogs',
+        countInBackup: bundle.data.auditLogs?.length ?? 0,
+        category: 'operational',
+        reason: `Append-only audit trail (capped at latest ${BACKUP_AUDIT_LOG_EXPORT_LIMIT} entries on export); never overwritten during restore.`,
+      },
+      {
+        collection: 'authorizedEmails',
+        countInBackup: bundle.data.authorizedEmails?.length ?? 0,
+        category: 'security_sensitive',
+        reason: 'Security-sensitive user role allowlist requires manual review in Section 9; never auto-restored.',
+      },
+      {
+        collection: 'systemSettings',
+        countInBackup: bundle.data.systemSettings?.length ?? 0,
+        category: 'security_sensitive',
+        reason: 'Security-sensitive system configuration requires manual review in Section 9; never auto-restored.',
+      },
+    ],
+    failed: [] as BackupRestoreFailure[],
+    manualInterventionRequired: [],
+  };
+}
 
 export function buildSakarBazaarBackupBundle(params: {
   exportedByUid: string;
@@ -25,6 +165,7 @@ export function buildSakarBazaarBackupBundle(params: {
   auditLogs: AuditLogRecord[];
   authorizedEmails: AuthorizedEmailRecord[];
   systemSettings: SystemSettingsRecord[];
+  legacyOverrides?: LegacyOverridesRecord | null;
 }): SakarBazaarBackupBundle {
   return {
     schemaVersion: '1.0.0',
@@ -59,6 +200,7 @@ export function buildSakarBazaarBackupBundle(params: {
       auditLogs: params.auditLogs,
       authorizedEmails: params.authorizedEmails,
       systemSettings: params.systemSettings,
+      ...(params.legacyOverrides !== undefined ? { legacyOverrides: params.legacyOverrides } : {}),
     },
   };
 }
@@ -150,7 +292,8 @@ export function validateBackupBundle(raw: unknown): BackupValidationReport {
 
   const payloadIds = new Set(mediaPayloads.map((p) => p.mediaId));
   for (const item of media) {
-    if (item.mediaType?.startsWith('image/') && !payloadIds.has(item.id)) {
+    const isStaticBundled = Boolean(item.storagePath && item.storagePath.startsWith('public/assets/'));
+    if (item.mediaType?.startsWith('image/') && !isStaticBundled && !payloadIds.has(item.id)) {
       warnings.push(`Image metadata "${item.fileName || item.id}" has no embedded payload in mediaPayloads.`);
     }
   }

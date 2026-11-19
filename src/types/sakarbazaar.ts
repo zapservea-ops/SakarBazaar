@@ -545,6 +545,130 @@ export interface AuditLogRecord {
   createdAt?: unknown;
 }
 
+export interface LegacyOverridesRecord {
+  suppressedArticleIds: string[];
+  suppressedSlugs: string[];
+  updatedByUid?: string;
+  updatedAt?: unknown;
+}
+
+export interface ManagedNewsItem {
+  doc: StoredArticleDoc;
+  origin: 'firestore' | 'static';
+  isMigratedToFirestore: boolean;
+  matchesLegacyCatalog: boolean;
+  publishedAtMsResolved: number;
+  updatedAtMsResolved: number;
+}
+
+export interface LegacyMigrationPublishSafety {
+  canSafelyPublish: boolean;
+  awaitingVerification: boolean;
+  completeEn: boolean;
+  completeHi: boolean;
+  missingMedia: boolean;
+  resultingStatusIfPublished: EditorialWorkflowStatus;
+  reasons: string[];
+}
+
+export interface LegacyMigrationItemPreview {
+  articleId: string;
+  slug: string;
+  headline: string;
+  headlineHi: string;
+  category: Exclude<NewsCategory, 'All'>;
+  verificationStatus: VerificationStatus;
+  publishedAt: string;
+  publishedAtMs: number;
+  mediaId?: string;
+  hindiBodySeededFromDeck: boolean;
+  publishSafety: LegacyMigrationPublishSafety;
+  action: 'migrate' | 'already_in_firestore' | 'slug_conflict';
+  reason: string;
+}
+
+export interface LegacyMigrationPreview {
+  totalStaticArticles: number;
+  readyCount: number;
+  blockedFromPublishCount: number;
+  alreadyMigratedCount: number;
+  conflictCount: number;
+  mediaAssetsToRegister: Array<{ id: string; fileName: string; mediaType: string; alreadyRegistered: boolean }>;
+  items: LegacyMigrationItemPreview[];
+}
+
+export interface LegacyMigrationReport {
+  startedAt: string;
+  completedAt: string;
+  migratedArticleIds: string[];
+  skippedArticleIds: string[];
+  registeredMediaIds: string[];
+  downgradedItems?: Array<{
+    id: string;
+    resultingStatus: EditorialWorkflowStatus;
+    reasons: string[];
+  }>;
+  errors: string[];
+  targetStatus: EditorialWorkflowStatus;
+}
+
+export type BackupCollectionCategory = 'content' | 'operational' | 'security_sensitive';
+
+export interface BackupCollectionScopeInfo {
+  key:
+    | 'articles'
+    | 'media'
+    | 'mediaPayloads'
+    | 'paidCampaigns'
+    | 'ipos'
+    | 'legacyOverrides'
+    | 'ipoSourceReviews'
+    | 'auditLogs'
+    | 'authorizedEmails'
+    | 'systemSettings';
+  label: string;
+  category: BackupCollectionCategory;
+  exported: boolean;
+  restored: boolean;
+  exportCapNote?: string;
+  restoreNote: string;
+}
+
+export interface BackupRestoreFailure {
+  collection: string;
+  id: string;
+  error: string;
+}
+
+export interface BackupRestoreReport {
+  startedAt: string;
+  completedAt: string;
+  nonAtomicWarning: string;
+  restoredByCollection: {
+    articles: number;
+    media: number;
+    mediaPayloads: number;
+    paidCampaigns: number;
+    ipos: number;
+    legacyOverrides: number;
+  };
+  skippedCollections: Array<{
+    collection: string;
+    countInBackup: number;
+    category: BackupCollectionCategory;
+    reason: string;
+  }>;
+  failed: BackupRestoreFailure[];
+  manualInterventionRequired: string[];
+}
+
+export interface PublicDataDiagnostics {
+  articlesOk: boolean;
+  overridesOk: boolean;
+  iposOk: boolean;
+  message: string | null;
+}
+
 export interface SakarBazaarBackupBundle {
   schemaVersion: '1.0.0';
   app: 'SakarBazaar';
@@ -577,6 +701,6 @@ export interface SakarBazaarBackupBundle {
     auditLogs: AuditLogRecord[];
     authorizedEmails: AuthorizedEmailRecord[];
     systemSettings: SystemSettingsRecord[];
+    legacyOverrides?: LegacyOverridesRecord | null;
   };
 }
-

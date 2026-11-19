@@ -19,8 +19,16 @@ function resolveCategoryParam(rawParam?: string): NewsCategory {
 export function NewsListPage() {
   const { category: routeCategoryParam } = useParams();
   const navigate = useNavigate();
-  const { lang, ui, articlesCatalog, bookmarks, searchTerm, setSearchTerm, toggleBookmark } =
-    useSakarBazaar();
+  const {
+    lang,
+    ui,
+    articlesCatalog,
+    publicDataDiagnostics,
+    bookmarks,
+    searchTerm,
+    setSearchTerm,
+    toggleBookmark,
+  } = useSakarBazaar();
 
   const activeCategory = resolveCategoryParam(routeCategoryParam);
   const [shownCount, setShownCount] = useState(8);
@@ -67,10 +75,21 @@ export function NewsListPage() {
           </h1>
           <p>{ui.newsPageSubtitle}</p>
         </div>
-        <Link to="/editorial" className="btn ghost">
+        <Link to="/admin" className="btn ghost">
           Editorial Desk →
         </Link>
       </div>
+
+      {(!publicDataDiagnostics.articlesOk || !publicDataDiagnostics.overridesOk) &&
+        publicDataDiagnostics.message && (
+          <div
+            className="sb-note-box"
+            role="status"
+            style={{ marginBottom: '14px', borderColor: 'var(--down)' }}
+          >
+            <strong>Live Feed Notice:</strong> {publicDataDiagnostics.message}
+          </div>
+        )}
 
       <section className="card feed" style={{ marginTop: 0 }}>
         <div

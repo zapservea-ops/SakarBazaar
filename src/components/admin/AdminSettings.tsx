@@ -9,6 +9,7 @@ import {
 import type {
   AdminUserRecord,
   AuthorizedEmailRecord,
+  BackupRestoreReport,
   DurationPreset,
   SakarBazaarBackupBundle,
 } from '../../types/sakarbazaar';
@@ -17,7 +18,13 @@ import {
   isValidOperatorEmail,
   normalizeEmailKey,
 } from '../../utils/adminPermissions';
-import { validateBackupBundle, type BackupValidationReport } from '../../utils/backupRestore';
+import {
+  BACKUP_AUDIT_LOG_EXPORT_LIMIT,
+  BACKUP_COLLECTION_SCOPE,
+  NON_ATOMIC_RESTORE_WARNING,
+  validateBackupBundle,
+  type BackupValidationReport,
+} from '../../utils/backupRestore';
 import { extractReadableErrorMessage } from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
@@ -69,6 +76,7 @@ export function AdminSettings({
   );
   const [validationReport, setValidationReport] = useState<BackupValidationReport | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [restoreReport, setRestoreReport] = useState<BackupRestoreReport | null>(null);
   const actionLocksRef = useRef<Record<string, boolean>>({});
 
   async function handleExportBackup() {
@@ -136,14 +144,25 @@ export function AdminSettings({
     actionLocksRef.current.restore = true;
     setRestoring(true);
     try {
-      const res = await restoreBackupBundleToFirestore(pendingRestoreBundle);
+      const report = await restoreBackupBundleToFirestore(pendingRestoreBundle);
+      setRestoreReport(report);
       setPendingRestoreBundle(null);
       setValidationReport(null);
       await onRefresh();
       await onPublicContentChanged();
+      const totalRestored =
+        report.restoredByCollection.articles +
+        report.restoredByCollection.media +
+        report.restoredByCollection.mediaPayloads +
+        report.restoredByCollection.paidCampaigns +
+        report.restoredByCollection.ipos +
+        report.restoredByCollection.legacyOverrides;
       onNotify({
-        tone: 'ok',
-        text: `Owner restore complete: restored ${res.restoredCount} records across collections.`,
+        tone: report.failed.length > 0 ? 'err' : 'ok',
+        text:
+          report.failed.length > 0
+            ? `Partial restore finished: ${totalRestored} restored, ${report.failed.length} record(s) failed — inspect the Restore Report below.`
+            : `Owner restore complete: restored ${totalRestored} records across content & operational collections.`,
       });
     } catch (err) {
       onNotify({
@@ -307,12 +326,53 @@ export function AdminSettings({
         <div className="sb-note-box">
           <strong>Important Backup Scope:</strong> Compressed article photographs are included in the JSON
           backup. Video files live on YouTube and on the Owner PC — this backup includes YouTube IDs,
-          URLs, and video metadata only.
+          URLs, and video metadata only. Audit history export is capped at the latest{' '}
+          <strong>{BACKUP_AUDIT_LOG_EXPORT_LIMIT} records</strong> to stay within Spark quota limits.
+        </div>
+
+        <div className="sb-admin-subpanel" style={{ marginTop: '14px' }}>
+          <h3>Backup &amp; Restore Scope Matrix by Collection Category</h3>
+          <div className="sb-admin-list">
+            {BACKUP_COLLECTION_SCOPE.map((item) => (
+              <div className="sb-admin-list-row" key={item.key}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '3px' }}>
+                    <span
+                      className={`pill ${
+                        item.category === 'content'
+                          ? 'sb-pill-teal'
+                          : item.category === 'security_sensitive'
+                            ? 'sb-pill-amber'
+                            : 'sb-pill-muted'
+                      }`}
+                    >
+                      {item.category === 'content'
+                        ? 'Content'
+                        : item.category === 'security_sensitive'
+                          ? 'Security-Sensitive'
+                          : 'Operational'}
+                    </span>
+                    <span className={`pill ${item.restored ? 'sb-pill-teal' : 'sb-pill-muted'}`}>
+                      {item.restored ? 'Exported & Auto-Restored' : 'Exported Only (Manual Review)'}
+                    </span>
+                  </div>
+                  <strong>{item.label}</strong>
+                  <div className="meta">
+                    {item.exportCapNote ? `${item.exportCapNote} ` : ''}
+                    {item.restoreNote}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {permissions.canRestoreBackup ? (
           <div className="sb-admin-subpanel" style={{ marginTop: '14px' }}>
             <h3>Owner-Only Backup Restore (Dry-Run Validation + Merge)</h3>
+            <p className="meta" style={{ marginTop: 0 }}>
+              {NON_ATOMIC_RESTORE_WARNING}
+            </p>
             <label className="sb-form-field">
               <span>Upload SakarBazaar Backup JSON File</span>
               <input
@@ -348,6 +408,55 @@ export function AdminSettings({
                 ) : (
                   <div>
                     <strong>Backup Validation Failed:</strong> {validationReport.errors.join(' ')}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {restoreReport && (
+              <div className="sb-note-box" style={{ marginTop: '12px' }} role="status">
+                <strong>Last Backup Restore Report ({restoreReport.completedAt}):</strong>
+                <div className="meta" style={{ marginTop: '4px' }}>
+                  Restored: Articles {restoreReport.restoredByCollection.articles} · Media{' '}
+                  {restoreReport.restoredByCollection.media} · Payloads{' '}
+                  {restoreReport.restoredByCollection.mediaPayloads} · Paid Campaigns{' '}
+                  {restoreReport.restoredByCollection.paidCampaigns} · IPOs{' '}
+                  {restoreReport.restoredByCollection.ipos} · Legacy Overrides{' '}
+                  {restoreReport.restoredByCollection.legacyOverrides}
+                </div>
+                <div style={{ marginTop: '8px' }}>
+                  <strong>Skipped Collections ({restoreReport.skippedCollections.length}):</strong>
+                  <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
+                    {restoreReport.skippedCollections.map((s) => (
+                      <li key={s.collection}>
+                        <code>{s.collection}</code> ({s.countInBackup} in backup, {s.category}): {s.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                {restoreReport.failed.length > 0 && (
+                  <div className="sb-admin-alert err" style={{ marginTop: '8px' }}>
+                    <strong>Failed Documents ({restoreReport.failed.length}):</strong>
+                    <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
+                      {restoreReport.failed.map((f, idx) => (
+                        <li key={`${f.collection}-${f.id}-${idx}`}>
+                          <code>
+                            {f.collection}/{f.id}
+                          </code>
+                          : {f.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {restoreReport.manualInterventionRequired.length > 0 && (
+                  <div style={{ marginTop: '8px' }}>
+                    <strong>Manual Follow-Up Recommended:</strong>
+                    <ul style={{ margin: '4px 0 0', paddingLeft: '18px' }}>
+                      {restoreReport.manualInterventionRequired.map((step, idx) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </div>

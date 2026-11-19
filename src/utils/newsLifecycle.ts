@@ -418,6 +418,31 @@ export function evaluateDeletionApproval(
   };
 }
 
+export function isArticleInDeletionQueue(article: {
+  status?: EditorialWorkflowStatus;
+  deletionStatus?: DeletionStatus;
+}): boolean {
+  if (
+    article.status === 'Pending Deletion' ||
+    article.status === 'Deletion In Progress'
+  ) {
+    return true;
+  }
+  return (
+    article.deletionStatus === 'pending_approval' ||
+    article.deletionStatus === 'approved' ||
+    article.deletionStatus === 'in_progress' ||
+    article.deletionStatus === 'partial_failure'
+  );
+}
+
+export function isArticlePermanentlyDeleted(article: {
+  status?: EditorialWorkflowStatus;
+  deletionStatus?: DeletionStatus;
+}): boolean {
+  return article.status === 'Deleted' || article.deletionStatus === 'deleted';
+}
+
 export function canRetryPermanentDeletion(
   article: { status?: EditorialWorkflowStatus; deletionStatus?: DeletionStatus },
   role: AdminRole,

@@ -1,3 +1,4 @@
+import { ARTICLES_CATALOG } from '../../data/sampleData';
 import {
   formatRemainingDuration,
   isArticleExpired,
@@ -20,11 +21,19 @@ export function AdminDashboardOverview({
   const expiringSoon = data.articles.filter((a) => isArticleExpiringSoon(a, nowMs, thresholdHours));
   const expiredOrRetained = data.articles.filter(
     (a) =>
-      (a.status === 'Expired' || a.status === 'Retained' || (a.status === 'Published' && isArticleExpired(a, nowMs))) &&
+      (a.status === 'Expired' ||
+        a.status === 'Retained' ||
+        a.status === 'Archived' ||
+        (a.status === 'Published' && isArticleExpired(a, nowMs))) &&
       a.deletionStatus !== 'approved' &&
       a.deletionStatus !== 'in_progress' &&
       a.deletionStatus !== 'partial_failure',
   );
+  const firestoreIds = new Set(data.articles.map((a) => a.id));
+  const firestoreSlugs = new Set(data.articles.map((a) => a.slug));
+  const unmigratedLegacyCount = ARTICLES_CATALOG.filter(
+    (base) => !firestoreIds.has(base.id) && !firestoreSlugs.has(base.slug),
+  ).length;
   const pendingDeletion = data.articles.filter(
     (a) =>
       a.status === 'Pending Deletion' ||
@@ -78,7 +87,11 @@ export function AdminDashboardOverview({
           </button>
           <button type="button" className="sb-admin-kpi" onClick={() => onNavigate('expired')}>
             <b>{expiredOrRetained.length}</b>
-            <span>Expired / Retained Private</span>
+            <span>Expired / Archived Private</span>
+          </button>
+          <button type="button" className="sb-admin-kpi" onClick={() => onNavigate('manage-news')}>
+            <b>{unmigratedLegacyCount}</b>
+            <span>Legacy Static Unmigrated</span>
           </button>
           <button type="button" className="sb-admin-kpi" onClick={() => onNavigate('pending-deletion')}>
             <b>{pendingDeletion.length}</b>

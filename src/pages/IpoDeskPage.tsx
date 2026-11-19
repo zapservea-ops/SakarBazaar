@@ -10,7 +10,7 @@ const SEGMENTS: IpoSegment[] = ['Mainboard', 'SME'];
 const STATUS_FILTERS: ('All' | IpoStatus)[] = ['All', 'Proposed OFS', 'Open', 'Upcoming', 'Closed', 'Listed'];
 
 export function IpoDeskPage() {
-  const { lang, ui, ipoRecords, watchlistIds, toggleWatchlist } = useSakarBazaar();
+  const { lang, ui, ipoRecords, publicDataDiagnostics, watchlistIds, toggleWatchlist } = useSakarBazaar();
   const [segment, setSegment] = useState<IpoSegment>('Mainboard');
   const [statusFilter, setStatusFilter] = useState<'All' | IpoStatus>('All');
 
@@ -41,6 +41,16 @@ export function IpoDeskPage() {
           <p>{ui.ipoPageSubtitle}</p>
         </div>
       </div>
+
+      {!publicDataDiagnostics.iposOk && publicDataDiagnostics.message && (
+        <div
+          className="sb-note-box"
+          role="status"
+          style={{ marginBottom: '14px', borderColor: 'var(--down)' }}
+        >
+          <strong>Live IPO Sync Notice:</strong> {publicDataDiagnostics.message}
+        </div>
+      )}
 
       <div className="sumgrid">
         {summaryStats.map((stat) => (

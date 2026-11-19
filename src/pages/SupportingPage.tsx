@@ -277,7 +277,7 @@ export function SupportingPage({ page }: SupportingPageProps) {
                   <li><Link to="/calendar">/calendar — Economic &amp; IPO Calendar</Link></li>
                   <li><Link to="/watchlist">/watchlist — Personal Watchlist</Link></li>
                   <li><Link to="/explainers">/explainers — Financial Explainers</Link></li>
-                  <li><Link to="/editorial">/editorial — Newsroom Editorial Desk</Link></li>
+                  <li><Link to="/admin">/admin — Newsroom Admin Desk</Link></li>
                   <li><Link to="/search">/search — Site-wide Search</Link></li>
                 </ul>
               </div>

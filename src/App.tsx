@@ -6,7 +6,6 @@ import { AdminPage } from './pages/AdminPage';
 import { ArticleDetailPage } from './pages/ArticleDetailPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { ChangeLedgerPage } from './pages/ChangeLedgerPage';
-import { EditorialDeskPage } from './pages/EditorialDeskPage';
 import { ExplainerDetailPage } from './pages/ExplainerDetailPage';
 import { ExplainersPage } from './pages/ExplainersPage';
 import { HomePage } from './pages/HomePage';
@@ -40,9 +39,9 @@ export default function App() {
               <Route path="/explainers" element={<ExplainersPage />} />
               <Route path="/explainers/:slug" element={<ExplainerDetailPage />} />
               <Route path="/search" element={<SearchPage />} />
-              <Route path="/editorial" element={<EditorialDeskPage />} />
+              <Route path="/editorial" element={<Navigate to="/admin" replace />} />
               <Route path="/admin" element={<AdminPage />} />
-              <Route path="/newsroom" element={<Navigate to="/editorial" replace />} />
+              <Route path="/newsroom" element={<Navigate to="/admin" replace />} />
               <Route path="/about" element={<SupportingPage page="about" />} />
               <Route path="/disclaimer" element={<SupportingPage page="disclaimer" />} />
               <Route path="/privacy" element={<SupportingPage page="privacy" />} />

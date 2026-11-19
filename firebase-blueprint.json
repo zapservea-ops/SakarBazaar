@@ -281,10 +281,22 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "email", "topic", "message", "createdAt"]
+    },
+    "LegacyOverrides": {
+      "title": "LegacyOverrides",
+      "description": "Public suppression overrides keeping unpublished, archived, expired, or deleted static catalog articles hidden publicly",
+      "type": "object",
+      "properties": {
+        "suppressedArticleIds": { "type": "array", "description": "Up to 200 static article IDs suppressed from public display" },
+        "suppressedSlugs": { "type": "array", "description": "Up to 200 static article slugs suppressed from public display" },
+        "updatedByUid": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["suppressedArticleIds", "suppressedSlugs", "updatedByUid", "updatedAt"]
     }
   },
   "firestore": {
-    "/admins/{userId}": { "schema": { "$ref": "#/entities/AdminUser" }, "description": "Authorized Owner and Publisher UID profiles" },
+    "/admins/{userId}": { "schema": { "$ref": "#/entities/AdminUser" }, "description": "Display profile cache for Owner and Publisher UIDs (authorization is governed strictly by bootstrapped Owner and /authorizedEmails allowlist)" },
     "/authorizedEmails/{emailKey}": { "schema": { "$ref": "#/entities/AuthorizedEmail" }, "description": "Owner-managed email allowlist for Publisher onboarding" },
     "/systemSettings/{settingId}": { "schema": { "$ref": "#/entities/SystemSetting" }, "description": "Owner-managed security and editorial system settings" },
     "/articles/{articleId}": { "schema": { "$ref": "#/entities/Article" }, "description": "Shared EN/HI editorial articles with elapsed-hour expiry" },
@@ -295,6 +307,7 @@
     "/ipoSourceReviews/{reviewId}": { "schema": { "$ref": "#/entities/IpoSourceReview" }, "description": "Official SEBI/NSE/BSE diff candidates awaiting human approval" },
     "/marketInstruments/{instrumentId}": { "schema": { "$ref": "#/entities/MarketInstrument" }, "description": "Market instrument catalog entries" },
     "/auditLogs/{logId}": { "schema": { "$ref": "#/entities/AuditLog" }, "description": "Append-only immutable audit log" },
-    "/contactSubmissions/{submissionId}": { "schema": { "$ref": "#/entities/ContactSubmission" }, "description": "Reader contact submissions" }
+    "/contactSubmissions/{submissionId}": { "schema": { "$ref": "#/entities/ContactSubmission" }, "description": "Reader contact submissions" },
+    "/publicCatalog/{catalogId}": { "schema": { "$ref": "#/entities/LegacyOverrides" }, "description": "Public legacy suppression overrides singleton (/publicCatalog/legacyOverrides)" }
   }
 }

@@ -21,8 +21,9 @@ import {
 import {
   auth,
   checkEditorAuthorization,
-  fetchPublishedEditorialArticles,
-  fetchPublicVerifiedIpos,
+  fetchPublicLegacyOverridesWithStatus,
+  fetchPublishedEditorialArticlesWithStatus,
+  fetchPublicVerifiedIposWithStatus,
   refreshFirebaseSession,
   signInWithGoogle,
   signOutUser,
@@ -32,9 +33,11 @@ import type {
   ArticleRecord,
   IpoRow,
   LanguageCode,
+  LegacyOverridesRecord,
   MarketDataResponse,
   MarketInstrument,
   NewsItem,
+  PublicDataDiagnostics,
   ThemeMode,
   TranslationStrings,
 } from '../types/sakarbazaar';
@@ -42,13 +45,13 @@ import {
   getPermissionsForRole,
   type AdminPermissionMatrix,
 } from '../utils/adminPermissions';
+import { filterPublicArticlesWithOverrides } from '../utils/historicalNews';
 import { getIstMarketStatus } from '../utils/marketFormat';
 import {
   MarketAutoRefreshController,
   markClientMarketDataStale,
   resolveFrontendRefreshIntervalMs,
 } from '../utils/marketPolling';
-import { isArticlePubliclyVisible } from '../utils/newsLifecycle';
 
 const THEME_KEY = 'sb-theme';
 const LANG_KEY = 'sb-lang';
@@ -139,6 +142,7 @@ interface SakarBazaarContextValue {
   articlesCatalog: ArticleRecord[];
   newsItems: NewsItem[];
   ipoRecords: IpoRow[];
+  publicDataDiagnostics: PublicDataDiagnostics;
   marketData: MarketDataResponse;
   marketLoading: boolean;
   marketError: string | null;
@@ -175,7 +179,14 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
   const [publishedRemoteArticles, setPublishedRemoteArticles] = useState<ArticleRecord[]>([]);
+  const [legacyOverrides, setLegacyOverrides] = useState<LegacyOverridesRecord | null>(null);
   const [remoteVerifiedIpos, setRemoteVerifiedIpos] = useState<IpoRow[]>([]);
+  const [publicDataDiagnostics, setPublicDataDiagnostics] = useState<PublicDataDiagnostics>({
+    articlesOk: true,
+    overridesOk: true,
+    iposOk: true,
+    message: null,
+  });
   const [marketData, setMarketData] = useState<MarketDataResponse>(buildFallbackMarketData);
   const [marketLoading, setMarketLoading] = useState<boolean>(true);
   const [marketError, setMarketError] = useState<string | null>(null);
@@ -304,13 +315,41 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshArticles = useCallback(async () => {
-    const remote = await fetchPublishedEditorialArticles();
-    setPublishedRemoteArticles(remote);
+    const [remoteRes, overridesRes] = await Promise.all([
+      fetchPublishedEditorialArticlesWithStatus(),
+      fetchPublicLegacyOverridesWithStatus(),
+    ]);
+    setPublishedRemoteArticles(remoteRes.items);
+    setLegacyOverrides(overridesRes.overrides);
+    setPublicDataDiagnostics((prev) => {
+      const nextMsg =
+        remoteRes.errorMessage ||
+        overridesRes.errorMessage ||
+        (!prev.iposOk ? prev.message : null);
+      return {
+        articlesOk: remoteRes.ok,
+        overridesOk: overridesRes.ok,
+        iposOk: prev.iposOk,
+        message: nextMsg,
+      };
+    });
   }, []);
 
   const refreshIpos = useCallback(async () => {
-    const remoteIpos = await fetchPublicVerifiedIpos();
-    setRemoteVerifiedIpos(remoteIpos);
+    const remoteIposRes = await fetchPublicVerifiedIposWithStatus();
+    setRemoteVerifiedIpos(remoteIposRes.items);
+    setPublicDataDiagnostics((prev) => {
+      const nextMsg =
+        !prev.articlesOk || !prev.overridesOk
+          ? prev.message
+          : remoteIposRes.errorMessage;
+      return {
+        articlesOk: prev.articlesOk,
+        overridesOk: prev.overridesOk,
+        iposOk: remoteIposRes.ok,
+        message: nextMsg,
+      };
+    });
   }, []);
 
   useEffect(() => {
@@ -332,25 +371,16 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
 
   const currentMinuteMs = Math.floor(now.getTime() / 60_000) * 60_000;
 
-  const articlesCatalog = useMemo(() => {
-    const seenSlugs = new Set<string>();
-    const combined: ArticleRecord[] = [];
-    for (const remote of publishedRemoteArticles) {
-      if (!isArticlePubliclyVisible(remote, currentMinuteMs)) continue;
-      if (!seenSlugs.has(remote.slug)) {
-        seenSlugs.add(remote.slug);
-        combined.push(remote);
-      }
-    }
-    for (const base of ARTICLES_CATALOG) {
-      if (!isArticlePubliclyVisible(base, currentMinuteMs)) continue;
-      if (!seenSlugs.has(base.slug)) {
-        seenSlugs.add(base.slug);
-        combined.push(base);
-      }
-    }
-    return combined;
-  }, [publishedRemoteArticles, currentMinuteMs]);
+  const articlesCatalog = useMemo(
+    () =>
+      filterPublicArticlesWithOverrides(
+        publishedRemoteArticles,
+        ARTICLES_CATALOG,
+        legacyOverrides,
+        currentMinuteMs,
+      ),
+    [publishedRemoteArticles, legacyOverrides, currentMinuteMs],
+  );
 
   const ipoRecords = useMemo(() => {
     const seenSlugs = new Set<string>();
@@ -539,6 +569,7 @@ export function SakarBazaarProvider({ children }: { children: ReactNode }) {
         articlesCatalog,
         newsItems,
         ipoRecords,
+        publicDataDiagnostics,
         marketData,
         marketLoading,
         marketError,

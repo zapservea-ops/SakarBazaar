@@ -1,14 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canDeleteArticleInFirestore,
+  canDeleteIpoInFirestore,
+  canDeleteIpoSourceReviewInFirestore,
+  canDeleteMediaInFirestore,
+  canDeletePaidCampaignInFirestore,
   canGetMediaRecord,
+  canGetPublicCatalog,
   canListMediaMetadata,
   canListMediaPayloads,
+  canListPublicCatalog,
   canMutateOrDeleteAuditLog,
   canPublicOrUserGetArticle,
   canPublicOrUserListArticle,
   canReadPaidCampaign,
   canWriteAuthorizedEmailOrSettings,
+  canWritePublicLegacyOverrides,
   hasOnlyAllowedArticleKeys,
   isPolicyAuthorizedUser,
   isPolicyOwner,
@@ -40,6 +48,14 @@ const REVOKED_ADMIN: PolicyAuthContext = {
   isAdminPublisherDoc: true,
   allowlistActive: false,
 };
+const STALE_ADMIN_DOC_NO_ALLOWLIST: PolicyAuthContext = {
+  uid: 'stale-admin',
+  email: 'former@gmail.com',
+  emailVerified: true,
+  isAdminOwnerDoc: true,
+  isAdminPublisherDoc: true,
+  // No allowlistActive / deleted authorizedEmails doc
+};
 const PUBLISHER: PolicyAuthContext = {
   uid: 'pub-1',
   email: 'father@gmail.com',
@@ -56,11 +72,13 @@ const OWNER: PolicyAuthContext = {
   isAdminOwnerDoc: true,
 };
 
-test('Firestore Rules Policy — RBAC Dirty Dozen & privilege boundaries', () => {
+test('Firestore Rules Policy — RBAC Dirty Dozen, privilege boundaries & removed /admins fallback', () => {
   assert.equal(isPolicyAuthorizedUser(ANON), false);
   assert.equal(isPolicyAuthorizedUser(UNVERIFIED_OWNER), false);
   assert.equal(isPolicyAuthorizedUser(RANDOM_VERIFIED_USER), false);
   assert.equal(isPolicyAuthorizedUser(REVOKED_ADMIN), false);
+  assert.equal(isPolicyAuthorizedUser(STALE_ADMIN_DOC_NO_ALLOWLIST), false);
+  assert.equal(isPolicyOwner(STALE_ADMIN_DOC_NO_ALLOWLIST), false);
   assert.equal(isPolicyAuthorizedUser(PUBLISHER), true);
   assert.equal(isPolicyAuthorizedUser(OWNER), true);
 
@@ -71,6 +89,7 @@ test('Firestore Rules Policy — RBAC Dirty Dozen & privilege boundaries', () =>
   // Only Owner can write authorizedEmails or systemSettings
   assert.equal(canWriteAuthorizedEmailOrSettings(ANON), false);
   assert.equal(canWriteAuthorizedEmailOrSettings(PUBLISHER), false);
+  assert.equal(canWriteAuthorizedEmailOrSettings(STALE_ADMIN_DOC_NO_ALLOWLIST), false);
   assert.equal(canWriteAuthorizedEmailOrSettings(OWNER), true);
 });
 
@@ -155,3 +174,91 @@ test('Firestore Rules Policy — Document ID validation, ghost field rejection, 
   assert.equal(isValidMediaPayloadSize(100_000, 'data:image/jpeg;base64,' + 'A'.repeat(620_001)), false);
   assert.equal(isValidMediaPayloadSize(0, 'data:image/jpeg;base64,' + 'A'.repeat(200)), false);
 });
+
+test('Firestore Rules Policy — /publicCatalog/legacyOverrides & deletion guards (Articles, Media, IPOs, Reviews, Paid Campaigns)', () => {
+  // Public anon & random readers can get legacyOverrides only (not list /publicCatalog or inspect private docs)
+  assert.equal(canGetPublicCatalog(ANON, 'legacyOverrides'), true);
+  assert.equal(canGetPublicCatalog(ANON, 'internalAdminState'), false);
+  assert.equal(canListPublicCatalog(ANON), false);
+  assert.equal(canListPublicCatalog(RANDOM_VERIFIED_USER), false);
+  assert.equal(canListPublicCatalog(PUBLISHER), true);
+  assert.equal(canListPublicCatalog(OWNER), true);
+
+  const validOverridesPayload = {
+    suppressedArticleIds: ['art-legacy-1'],
+    suppressedSlugs: ['art-legacy-1-slug'],
+    updatedByUid: 'pub-1',
+    updatedAt: 'SERVER_TS',
+  };
+
+  assert.equal(canWritePublicLegacyOverrides(ANON, 'legacyOverrides', validOverridesPayload), false);
+  assert.equal(canWritePublicLegacyOverrides(RANDOM_VERIFIED_USER, 'legacyOverrides', validOverridesPayload), false);
+  assert.equal(canWritePublicLegacyOverrides(PUBLISHER, 'legacyOverrides', validOverridesPayload, 'pub-1'), true);
+  assert.equal(
+    canWritePublicLegacyOverrides(
+      OWNER,
+      'legacyOverrides',
+      { ...validOverridesPayload, updatedByUid: 'owner-1' },
+      'owner-1',
+    ),
+    true,
+  );
+  assert.equal(
+    canWritePublicLegacyOverrides(
+      PUBLISHER,
+      'legacyOverrides',
+      { ...validOverridesPayload, spoofedExtra: true },
+      'pub-1',
+    ),
+    false,
+  );
+  assert.equal(canWritePublicLegacyOverrides(PUBLISHER, 'otherCatalog', validOverridesPayload, 'pub-1'), false);
+
+  // Direct permanent article deletion MUST be blocked unless article is approved in Pending Deletion / Deletion In Progress
+  const publishedArticle = { status: 'Published', deletionStatus: 'none' };
+  const draftArticle = { status: 'Draft', deletionStatus: 'none' };
+  const retainedArticle = { status: 'Retained', deletionStatus: 'none' };
+  const expiredArticle = { status: 'Expired', deletionStatus: 'none' };
+  const pendingApprovalOnly = { status: 'Pending Deletion', deletionStatus: 'pending_approval' };
+  const approvedForDelete = { status: 'Pending Deletion', deletionStatus: 'approved' };
+  const executingDelete = { status: 'Deletion In Progress', deletionStatus: 'in_progress' };
+  const retryDelete = { status: 'Pending Deletion', deletionStatus: 'partial_failure' };
+
+  for (const blockedState of [publishedArticle, draftArticle, retainedArticle, expiredArticle, pendingApprovalOnly]) {
+    assert.equal(canDeleteArticleInFirestore(OWNER, 'art-1', blockedState), false);
+    assert.equal(canDeleteArticleInFirestore(PUBLISHER, 'art-1', blockedState), false);
+  }
+  assert.equal(canDeleteArticleInFirestore(OWNER, 'art-1', undefined), false);
+
+  for (const allowedState of [approvedForDelete, executingDelete, retryDelete]) {
+    assert.equal(canDeleteArticleInFirestore(ANON, 'art-1', allowedState), false);
+    assert.equal(canDeleteArticleInFirestore(RANDOM_VERIFIED_USER, 'art-1', allowedState), false);
+    assert.equal(canDeleteArticleInFirestore(REVOKED_ADMIN, 'art-1', allowedState), false);
+    assert.equal(canDeleteArticleInFirestore(STALE_ADMIN_DOC_NO_ALLOWLIST, 'art-1', allowedState), false);
+    assert.equal(canDeleteArticleInFirestore(PUBLISHER, 'art-1', allowedState), true);
+    assert.equal(canDeleteArticleInFirestore(OWNER, 'art-1', allowedState), true);
+  }
+  assert.equal(canDeleteArticleInFirestore(OWNER, '../bad', approvedForDelete), false);
+
+  // Media deletion blocked if mediaPayload doc still exists; allowed once payload removed
+  assert.equal(canDeleteMediaInFirestore(PUBLISHER, 'med-1', true), false);
+  assert.equal(canDeleteMediaInFirestore(OWNER, 'med-1', true), false);
+  assert.equal(canDeleteMediaInFirestore(PUBLISHER, 'med-1', false), true);
+  assert.equal(canDeleteMediaInFirestore(OWNER, 'med-1', false), true);
+  assert.equal(canDeleteMediaInFirestore(REVOKED_ADMIN, 'med-1', false), false);
+
+  // IPO / IPO Source Review / Paid Campaign deletions are Owner-only with state protections
+  assert.equal(canDeleteIpoInFirestore(PUBLISHER, 'ipo-1', 'awaiting_verification'), false);
+  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', 'verified'), false);
+  assert.equal(canDeleteIpoInFirestore(OWNER, 'ipo-1', 'awaiting_verification'), true);
+
+  assert.equal(canDeleteIpoSourceReviewInFirestore(PUBLISHER, 'rev-1'), false);
+  assert.equal(canDeleteIpoSourceReviewInFirestore(OWNER, 'rev-1'), true);
+
+  assert.equal(canDeletePaidCampaignInFirestore(PUBLISHER, 'camp-1', 'Cancelled'), false);
+  assert.equal(canDeletePaidCampaignInFirestore(OWNER, 'camp-1', 'Active'), false);
+  assert.equal(canDeletePaidCampaignInFirestore(OWNER, 'camp-1', 'Cancelled'), true);
+  assert.equal(canDeletePaidCampaignInFirestore(OWNER, 'camp-1', 'Completed'), true);
+});
+
+

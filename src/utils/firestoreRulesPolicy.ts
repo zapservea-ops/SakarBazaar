@@ -29,9 +29,7 @@ export function isPolicyOwner(auth: PolicyAuthContext | null): boolean {
   if (auth.email?.toLowerCase() === BOOTSTRAPPED_OWNER_EMAIL || auth.isBootstrappedOwner) {
     return true;
   }
-  if (auth.allowlistActive === false) return false;
-  if (auth.allowlistRole && auth.allowlistRole !== 'owner') return false;
-  return Boolean(auth.isAdminOwnerDoc);
+  return auth.allowlistActive === true && auth.allowlistRole === 'owner';
 }
 
 export function isPolicyAuthorizedUser(auth: PolicyAuthContext | null): boolean {
@@ -39,8 +37,10 @@ export function isPolicyAuthorizedUser(auth: PolicyAuthContext | null): boolean 
   if (auth.email?.toLowerCase() === BOOTSTRAPPED_OWNER_EMAIL || auth.isBootstrappedOwner) {
     return true;
   }
-  if (auth.allowlistActive === false) return false;
-  return Boolean(auth.isAdminOwnerDoc || auth.isAdminPublisherDoc || auth.allowlistActive === true);
+  return (
+    auth.allowlistActive === true &&
+    (auth.allowlistRole === 'owner' || auth.allowlistRole === 'publisher')
+  );
 }
 
 export interface PolicyArticleRecord {
@@ -152,4 +152,89 @@ export function isValidMediaPayloadSize(sizeBytes: number, dataUrl: string): boo
     dataUrl.length >= 30 &&
     dataUrl.length <= 620_000
   );
+}
+
+export function canGetPublicCatalog(auth: PolicyAuthContext | null, catalogId: string): boolean {
+  if (isPolicyAuthorizedUser(auth)) return true;
+  return catalogId === 'legacyOverrides';
+}
+
+export function canListPublicCatalog(auth: PolicyAuthContext | null): boolean {
+  return isPolicyAuthorizedUser(auth);
+}
+
+export function canWritePublicLegacyOverrides(
+  auth: PolicyAuthContext | null,
+  catalogId: string,
+  payload: Record<string, unknown>,
+  authUid?: string,
+): boolean {
+  if (catalogId !== 'legacyOverrides') return false;
+  if (!isPolicyAuthorizedUser(auth)) return false;
+  const keys = Object.keys(payload);
+  const allowed = new Set(['suppressedArticleIds', 'suppressedSlugs', 'updatedByUid', 'updatedAt']);
+  if (!keys.every((k) => allowed.has(k))) return false;
+  if (!['suppressedArticleIds', 'suppressedSlugs', 'updatedByUid', 'updatedAt'].every((k) => k in payload)) {
+    return false;
+  }
+  if (!Array.isArray(payload.suppressedArticleIds) || payload.suppressedArticleIds.length > 200) return false;
+  if (!Array.isArray(payload.suppressedSlugs) || payload.suppressedSlugs.length > 200) return false;
+  if (authUid && payload.updatedByUid !== authUid) return false;
+  return true;
+}
+
+export function canDeleteArticleInFirestore(
+  auth: PolicyAuthContext | null,
+  articleId: string,
+  existingArticle?: { status?: string; deletionStatus?: string },
+): boolean {
+  if (!isValidFirestoreDocId(articleId)) return false;
+  if (!isPolicyAuthorizedUser(auth)) return false;
+  if (!existingArticle) return false;
+  const validStatus =
+    existingArticle.status === 'Pending Deletion' ||
+    existingArticle.status === 'Deletion In Progress';
+  const validDeletionStatus =
+    existingArticle.deletionStatus === 'approved' ||
+    existingArticle.deletionStatus === 'in_progress' ||
+    existingArticle.deletionStatus === 'partial_failure';
+  return validStatus && validDeletionStatus;
+}
+
+export function canDeleteMediaInFirestore(
+  auth: PolicyAuthContext | null,
+  mediaId: string,
+  payloadStillExists: boolean,
+): boolean {
+  if (!isValidFirestoreDocId(mediaId)) return false;
+  if (!isPolicyAuthorizedUser(auth)) return false;
+  return !payloadStillExists;
+}
+
+export function canDeleteIpoInFirestore(
+  auth: PolicyAuthContext | null,
+  ipoId: string,
+  verificationStatus?: string,
+): boolean {
+  if (!isValidFirestoreDocId(ipoId)) return false;
+  if (!isPolicyOwner(auth)) return false;
+  return verificationStatus !== 'verified';
+}
+
+export function canDeleteIpoSourceReviewInFirestore(
+  auth: PolicyAuthContext | null,
+  reviewId: string,
+): boolean {
+  if (!isValidFirestoreDocId(reviewId)) return false;
+  return isPolicyOwner(auth);
+}
+
+export function canDeletePaidCampaignInFirestore(
+  auth: PolicyAuthContext | null,
+  campaignId: string,
+  internalStatus?: string,
+): boolean {
+  if (!isValidFirestoreDocId(campaignId)) return false;
+  if (!isPolicyOwner(auth)) return false;
+  return internalStatus === 'Cancelled' || internalStatus === 'Completed' || internalStatus === 'Planned';
 }

@@ -5,7 +5,11 @@ import {
 } from '../../lib/firebase';
 import type { StoredArticleDoc } from '../../types/sakarbazaar';
 import { canSafelyDeleteMediaAsset } from '../../utils/mediaLibrary';
-import { canRetryPermanentDeletion, extractReadableErrorMessage } from '../../utils/newsLifecycle';
+import {
+  canRetryPermanentDeletion,
+  extractReadableErrorMessage,
+  isArticleInDeletionQueue,
+} from '../../utils/newsLifecycle';
 import type { AdminSectionBaseProps } from './adminTypes';
 
 interface AdminPendingDeletionProps extends AdminSectionBaseProps {
@@ -23,14 +27,7 @@ export function AdminPendingDeletion({
   const [confirmExecuteId, setConfirmExecuteId] = useState<string | null>(null);
   const busyIdsRef = useRef<Set<string>>(new Set());
 
-  const queue = data.articles.filter(
-    (art) =>
-      art.status === 'Pending Deletion' ||
-      art.status === 'Deletion In Progress' ||
-      art.deletionStatus === 'approved' ||
-      art.deletionStatus === 'in_progress' ||
-      art.deletionStatus === 'partial_failure',
-  );
+  const queue = data.articles.filter(isArticleInDeletionQueue);
 
   async function handleExecute(art: StoredArticleDoc) {
     if (busyIdsRef.current.has(art.id)) return;

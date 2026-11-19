@@ -9,6 +9,7 @@ import { ALL_TRACKED_INSTRUMENTS } from './server/market-data/instruments.ts';
 import { MarketDataCacheService } from './server/market-data/cache.ts';
 import { createProviderAdapterFromEnv } from './server/market-data/provider.ts';
 import { checkOfficialIpoSources } from './server/ipo-sources/collector.ts';
+import { resolveGeminiBriefStatus } from './server/editorial/aiConfig.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,7 +103,7 @@ async function verifyFirebaseIdToken(
 }
 
 async function isAuthorizedNewsroomEditor(
-  uid: string,
+  _uid: string,
   email: string,
   emailVerified: boolean,
   idToken: string,
@@ -117,24 +118,18 @@ async function isAuthorizedNewsroomEditor(
     const allowRes = await fetch(allowlistUrl, {
       headers: { Authorization: `Bearer ${idToken}` },
     });
-    if (allowRes.ok) {
-      const allowDoc = (await allowRes.json()) as {
-        fields?: { active?: { booleanValue?: boolean } };
-      };
-      // If an allowlist record exists and has active === false, access is explicitly revoked.
-      if (allowDoc.fields?.active?.booleanValue === false) {
-        return false;
-      }
-      if (allowDoc.fields?.active?.booleanValue === true) {
-        return true;
-      }
+    if (!allowRes.ok) {
+      return false;
     }
-
-    const docUrl = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId)}/documents/admins/${encodeURIComponent(uid)}`;
-    const res = await fetch(docUrl, {
-      headers: { Authorization: `Bearer ${idToken}` },
-    });
-    return res.ok;
+    const allowDoc = (await allowRes.json()) as {
+      fields?: {
+        active?: { booleanValue?: boolean };
+        role?: { stringValue?: string };
+      };
+    };
+    const isActive = allowDoc.fields?.active?.booleanValue === true;
+    const role = (allowDoc.fields?.role?.stringValue || '').toLowerCase();
+    return isActive && (role === 'owner' || role === 'publisher');
   } catch {
     return false;
   }
@@ -156,11 +151,20 @@ async function startServer() {
 
   app.get('/api/health', (_req: Request, res: Response) => {
     const marketMeta = marketDataService.getSnapshotMetadata();
+    const aiBriefStatus = resolveGeminiBriefStatus(process.env);
     res.json({
       ok: true,
       service: 'sakarbazaar',
       serverTimeMs: Date.now(),
       marketData: marketMeta,
+      aiBriefEnabled: aiBriefStatus.enabled,
+      aiBrief: {
+        enabled: aiBriefStatus.enabled,
+        killSwitchActive: aiBriefStatus.killSwitchActive,
+        model: aiBriefStatus.model,
+        endpoint: aiBriefStatus.endpoint,
+        billingScopeNote: aiBriefStatus.billingScopeNote,
+      },
     });
   });
 
@@ -262,10 +266,21 @@ async function startServer() {
       return;
     }
 
+    const aiBriefStatus = resolveGeminiBriefStatus(process.env);
+    if (aiBriefStatus.killSwitchActive) {
+      res.status(503).json({
+        error:
+          'AI brief generation is disabled by server kill-switch (ENABLE_GEMINI_AI_BRIEF is not set to "true"). Manual drafting and bilingual publishing work at Rs 0 external AI cost.',
+        aiBriefEnabled: false,
+      });
+      return;
+    }
+
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) {
       res.status(503).json({
-        error: 'GEMINI_API_KEY is not configured in server secrets. Configure it in Settings > Secrets to generate AI briefs.',
+        error: 'GEMINI_API_KEY is not configured in server secrets. Configure it in server environment variables to generate AI briefs.',
+        aiBriefEnabled: false,
       });
       return;
     }

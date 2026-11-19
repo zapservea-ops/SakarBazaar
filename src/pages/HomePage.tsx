@@ -32,6 +32,7 @@ export function HomePage() {
     articlesCatalog,
     newsItems,
     ipoRecords,
+    publicDataDiagnostics,
     toggleBookmark,
   } = useSakarBazaar();
 
@@ -76,6 +77,16 @@ export function HomePage() {
       </section>
 
       <main id="top" className="wrap sb-home-main">
+        {(!publicDataDiagnostics.articlesOk || !publicDataDiagnostics.overridesOk) &&
+          publicDataDiagnostics.message && (
+            <div
+              className="sb-note-box"
+              role="status"
+              style={{ marginBottom: '14px', borderColor: 'var(--down)' }}
+            >
+              <strong>Live Feed Notice:</strong> {publicDataDiagnostics.message}
+            </div>
+          )}
         {/* ── PROMINENT TOP THREE FINANCIAL STORIES ───────────────────── */}
         <section className="sb-dispatches-section" aria-label="Lead Financial Stories">
           <div className="sec-h">

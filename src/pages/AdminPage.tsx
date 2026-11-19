@@ -31,7 +31,7 @@ import {
   sweepExpiredPublishedArticles,
 } from '../lib/firebase';
 import type { StoredArticleDoc } from '../types/sakarbazaar';
-import { extractReadableErrorMessage } from '../utils/newsLifecycle';
+import { extractReadableErrorMessage, isArticleInDeletionQueue } from '../utils/newsLifecycle';
 
 const DEFAULT_WORKSPACE: AdminWorkspaceData = {
   articles: [],
@@ -205,13 +205,7 @@ export function AdminPage() {
     );
   }
 
-  const pendingDelCount = workspace.articles.filter(
-    (a) =>
-      a.status === 'Pending Deletion' ||
-      a.status === 'Deletion In Progress' ||
-      a.deletionStatus === 'approved' ||
-      a.deletionStatus === 'partial_failure',
-  ).length;
+  const pendingDelCount = workspace.articles.filter(isArticleInDeletionQueue).length;
   const ipoReviewCount = workspace.ipoReviews.filter((r) => r.reviewStatus === 'Needs Review').length;
 
   const navItems: AdminNavItem[] = [
@@ -358,6 +352,10 @@ export function AdminPage() {
           {section === 'expired' && (
             <AdminExpiredArchive
               {...baseProps}
+              onEditArticle={(art) => {
+                setEditingArticle(art);
+                setSection('news-desk');
+              }}
               onPublicContentChanged={handlePublicContentChanged}
             />
           )}

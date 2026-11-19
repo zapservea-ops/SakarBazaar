@@ -35,7 +35,11 @@ import {
   validateCompressedImagePayload,
 } from './mediaLibrary.ts';
 import {
+  BACKUP_AUDIT_LOG_EXPORT_LIMIT,
+  BACKUP_COLLECTION_SCOPE,
+  buildInitialBackupRestoreReport,
   buildSakarBazaarBackupBundle,
+  NON_ATOMIC_RESTORE_WARNING,
   prepareRestoredArticlePayload,
   prepareRestoredIpoPayload,
   prepareRestoredMediaBlobPayload,
@@ -43,6 +47,7 @@ import {
   prepareRestoredPaidCampaignPayload,
   validateBackupBundle,
 } from './backupRestore.ts';
+import { resolveGeminiBriefStatus } from '../../server/editorial/aiConfig.ts';
 import {
   assertReviewPendingResolution,
   calculateIpoStatusFromDates,
@@ -335,12 +340,28 @@ test('Permanent deletion approval by either user + partial failure retry + full 
     auditLogs: [],
     authorizedEmails: [],
     systemSettings: [],
+    legacyOverrides: {
+      suppressedArticleIds: ['old-static-1'],
+      suppressedSlugs: ['old-static-1-slug'],
+      updatedByUid: 'uid1',
+    },
+  });
+
+  // Include bundled static media metadata alongside uploaded photo
+  bundle.data.media.push({
+    id: 'med-static-hero',
+    fileName: 'hero.png',
+    storagePath: 'public/assets/hero.png',
+    mediaType: 'image/png',
+    uploadedByUid: 'uid1',
   });
 
   assert.equal(bundle.notes.includesPhotographs, true);
   assert.equal(bundle.notes.excludesYouTubeVideoFiles, true);
+  assert.deepEqual(bundle.data.legacyOverrides?.suppressedArticleIds, ['old-static-1']);
   const report = validateBackupBundle(bundle);
   assert.equal(report.valid, true);
+  assert.equal(report.warnings.length, 0);
   assert.equal(report.summary.mediaPayloads, 1);
   assert.equal(validateBackupBundle({ bad: true }).valid, false);
 });
@@ -660,6 +681,58 @@ test('Optimistic concurrency conflict guards and atomic IPO review resolution gu
     /already been resolved \(Rejected\)/,
   );
 });
+
+test('Gemini AI brief kill-switch defaults off cleanly and categorized backup scope/report are deterministic', () => {
+  // Default / disabled states never enable Gemini calls
+  const defaultOff = resolveGeminiBriefStatus({});
+  assert.equal(defaultOff.enabled, false);
+  assert.equal(defaultOff.killSwitchActive, true);
+  assert.equal(defaultOff.hasApiKey, false);
+
+  const explicitFalse = resolveGeminiBriefStatus({ ENABLE_GEMINI_AI_BRIEF: 'false', GEMINI_API_KEY: 'test-key' });
+  assert.equal(explicitFalse.enabled, false);
+  assert.equal(explicitFalse.killSwitchActive, true);
+
+  const trueNoKey = resolveGeminiBriefStatus({ ENABLE_GEMINI_AI_BRIEF: 'true', GEMINI_API_KEY: '' });
+  assert.equal(trueNoKey.enabled, false);
+  assert.equal(trueNoKey.killSwitchActive, false);
+  assert.equal(trueNoKey.hasApiKey, false);
+
+  const fullyEnabled = resolveGeminiBriefStatus({ ENABLE_GEMINI_AI_BRIEF: 'true', GEMINI_API_KEY: 'test-key' });
+  assert.equal(fullyEnabled.enabled, true);
+  assert.equal(fullyEnabled.killSwitchActive, false);
+
+  // Backup collection scope categorizes content vs operational vs security-sensitive
+  assert.equal(BACKUP_AUDIT_LOG_EXPORT_LIMIT, 200);
+  const byKey = new Map(BACKUP_COLLECTION_SCOPE.map((c) => [c.key, c]));
+  assert.equal(byKey.get('articles')?.category, 'content');
+  assert.equal(byKey.get('articles')?.restored, true);
+  assert.equal(byKey.get('auditLogs')?.category, 'operational');
+  assert.equal(byKey.get('auditLogs')?.restored, false);
+  assert.equal(byKey.get('authorizedEmails')?.category, 'security_sensitive');
+  assert.equal(byKey.get('authorizedEmails')?.restored, false);
+  assert.equal(byKey.get('systemSettings')?.category, 'security_sensitive');
+  assert.equal(byKey.get('systemSettings')?.restored, false);
+
+  const bundle = buildSakarBazaarBackupBundle({
+    exportedByUid: 'owner-1',
+    exportedByEmail: BOOTSTRAPPED_OWNER_EMAIL,
+    articles: [],
+    media: [],
+    mediaPayloads: [],
+    paidCampaigns: [],
+    ipos: [],
+    ipoSourceReviews: [],
+    auditLogs: [],
+    authorizedEmails: [{ id: 'a@b.com', email: 'a@b.com', displayName: 'A', role: 'publisher', active: true, addedByUid: 'owner-1' }],
+    systemSettings: [],
+  });
+  const initReport = buildInitialBackupRestoreReport(bundle, '2026-11-18T12:00:00.000Z');
+  assert.equal(initReport.nonAtomicWarning, NON_ATOMIC_RESTORE_WARNING);
+  assert.equal(initReport.skippedCollections.find((s) => s.collection === 'authorizedEmails')?.countInBackup, 1);
+  assert.equal(initReport.skippedCollections.length, 4);
+});
+
 
 
 

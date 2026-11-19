@@ -14,7 +14,7 @@ export function Footer() {
           <Link to="/news">{copy.news}</Link>
           <Link to="/calendar">{copy.calendar}</Link>
           <Link to="/explainers">{copy.explain}</Link>
-          <Link to="/editorial">{copy.editorial}</Link>
+          <Link to="/admin">{copy.editorial}</Link>
         </div>
         <div>
           <h4>{ui.footerCompany}</h4>

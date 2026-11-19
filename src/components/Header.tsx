@@ -364,8 +364,8 @@ export function Header() {
               </NavLink>
               <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '8px 0' }} />
               <NavLink
-                to="/editorial"
-                aria-current={location.pathname.startsWith('/editorial') ? 'page' : undefined}
+                to="/admin"
+                aria-current={location.pathname.startsWith('/admin') ? 'page' : undefined}
               >
                 {copy.editorial}
               </NavLink>

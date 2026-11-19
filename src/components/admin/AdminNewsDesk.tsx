@@ -1,17 +1,25 @@
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { MEDIA_ASSETS } from '../../data/editorialData';
 import {
+  auth,
   saveCompressedPhotoAsset,
   saveEditorialArticle,
   saveYouTubeMediaAsset,
   syncMediaVisibilityAcrossArticles,
 } from '../../lib/firebase';
 import type {
+  AiGeneratedBriefPayload,
   DurationPreset,
   EditorialWorkflowStatus,
   FeaturedPlacement,
   NewsCategory,
   StoredArticleDoc,
 } from '../../types/sakarbazaar';
+import {
+  formatPublishedDateLabel,
+  parseLegacyPublishedDateMs,
+  toIstIsoDateInput,
+} from '../../utils/historicalNews';
 import {
   compressImageFileInBrowser,
   parseYouTubeVideoUrl,
@@ -74,6 +82,8 @@ export function AdminNewsDesk({
   );
   const [durationTouched, setDurationTouched] = useState(false);
   const [customHours, setCustomHours] = useState<number>(72);
+  const [publishedDateMode, setPublishedDateMode] = useState<'preserve' | 'today'>('today');
+  const [publishedDateIso, setPublishedDateIso] = useState<string>(() => toIstIsoDateInput(Date.now()));
   const [featuredPlacement, setFeaturedPlacement] = useState<FeaturedPlacement>('none');
   const [isPaid, setIsPaid] = useState(false);
   const [paidDisclosureLabel, setPaidDisclosureLabel] = useState('Partner Disclosure');
@@ -106,17 +116,65 @@ export function AdminNewsDesk({
   const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
+  // Optional cost-gated AI Brief Helper (default-off kill-switch on server)
+  const [aiHelperOpen, setAiHelperOpen] = useState(false);
+  const [aiSourceMaterial, setAiSourceMaterial] = useState('');
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiLastResult, setAiLastResult] = useState<AiGeneratedBriefPayload | null>(null);
+  const [aiServerStatus, setAiServerStatus] = useState<{
+    enabled: boolean;
+    killSwitchActive: boolean;
+    model: string;
+    billingScopeNote: string;
+  } | null>(null);
+
   // Synchronous submit + idempotency + optimistic version guards
   const savingRef = useRef(false);
   const pendingArticleIdRef = useRef<string | null>(null);
   const editingUpdatedAtMsRef = useRef<number | null>(null);
   const uploadedPhotoRef = useRef<{ signature: string; mediaId: string } | null>(null);
 
+  const reusableMediaOptions = useMemo(() => {
+    const seen = new Set(data.media.map((m) => m.id));
+    const merged = [
+      ...data.media.map((m) => ({
+        id: m.id,
+        label: `${m.fileName} (${m.mediaType}) — ${m.credit || 'No credit'}`,
+      })),
+      ...MEDIA_ASSETS.filter((m) => !seen.has(m.id)).map((m) => ({
+        id: m.id,
+        label: `${m.fileName} (${m.mediaType}, Legacy Bundled) — ${m.credit || m.sourceNote || 'Editorial'}`,
+      })),
+    ];
+    return merged;
+  }, [data.media]);
+
   useEffect(() => {
     if (!editingArticle && !durationTouched && data.systemSettings.defaultDurationPreset) {
       setDurationPreset(data.systemSettings.defaultDurationPreset);
     }
   }, [editingArticle, durationTouched, data.systemSettings.defaultDurationPreset]);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/health')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (!active || !payload?.aiBrief) return;
+        setAiServerStatus({
+          enabled: Boolean(payload.aiBrief.enabled),
+          killSwitchActive: Boolean(payload.aiBrief.killSwitchActive),
+          model: String(payload.aiBrief.model || 'gemini-4-hydrogen'),
+          billingScopeNote: String(payload.aiBrief.billingScopeNote || ''),
+        });
+      })
+      .catch(() => {
+        // Ignore transient health fetch error
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!editingArticle) return;
@@ -136,6 +194,12 @@ export function AdminNewsDesk({
     setDurationPreset(editingArticle.durationPreset || '15d');
     setDurationTouched(true);
     setCustomHours(editingArticle.durationHours || 72);
+    const hasOriginalDate = Boolean(editingArticle.publishedAtMs || editingArticle.publishedAt);
+    setPublishedDateMode(hasOriginalDate ? 'preserve' : 'today');
+    setPublishedDateIso(
+      toIstIsoDateInput(editingArticle.publishedAtMs, editingArticle.publishedAt) ||
+        toIstIsoDateInput(Date.now()),
+    );
     setFeaturedPlacement(editingArticle.featuredPlacement || 'none');
     setIsPaid(Boolean(editingArticle.isPaid));
     setPaidDisclosureLabel(editingArticle.paidDisclosureLabel || 'Partner Disclosure');
@@ -184,6 +248,8 @@ export function AdminNewsDesk({
     setDurationPreset(data.systemSettings.defaultDurationPreset || '15d');
     setDurationTouched(false);
     setCustomHours(72);
+    setPublishedDateMode('today');
+    setPublishedDateIso(toIstIsoDateInput(Date.now()));
     setFeaturedPlacement('none');
     setIsPaid(false);
     setPaidDisclosureLabel('Partner Disclosure');
@@ -222,6 +288,76 @@ export function AdminNewsDesk({
       setLocalError(err instanceof Error ? err.message : 'Unable to compress photograph.');
     } finally {
       setCompressing(false);
+    }
+  }
+
+  async function handleGenerateAiBrief() {
+    if (aiGenerating) return;
+    if (!aiServerStatus?.enabled) {
+      setLocalError(
+        'AI brief generation is currently disabled by server kill-switch (ENABLE_GEMINI_AI_BRIEF=false). Manual drafting works at Rs 0 external API cost.',
+      );
+      return;
+    }
+    if (aiSourceMaterial.trim().length < 30) {
+      setLocalError('Enter at least 30 characters of official source material to generate an English brief.');
+      return;
+    }
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) {
+      setLocalError('Authentication token unavailable. Refresh session and retry.');
+      return;
+    }
+    setLocalError(null);
+    setAiGenerating(true);
+    try {
+      const res = await fetch('/api/editorial/generate-brief', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          sourceMaterial: aiSourceMaterial,
+          category,
+          sourceName,
+          sourceUrl,
+        }),
+      });
+      const json = (await res.json()) as Partial<AiGeneratedBriefPayload> & { error?: string };
+      if (!res.ok) {
+        throw new Error(json.error || `AI brief endpoint returned HTTP ${res.status}`);
+      }
+      const generated: AiGeneratedBriefPayload = {
+        headline: String(json.headline || ''),
+        summaryBrief: String(json.summaryBrief || ''),
+        wordCount: Number(json.wordCount || 0),
+        entities: json.entities || {
+          companies: [],
+          instrumentsAndSymbols: [],
+          financialValues: [],
+          dates: [],
+          regulatorsAndExchanges: [],
+        },
+        keywords: json.keywords || [],
+        verificationChecklist: json.verificationChecklist || [],
+      };
+      setAiLastResult(generated);
+      if (generated.headline) setEnHeadline(generated.headline);
+      if (generated.summaryBrief) {
+        setEnSummary(generated.summaryBrief);
+        if (!enBody.trim()) {
+          setEnBody(generated.summaryBrief);
+        }
+      }
+      onNotify({
+        tone: 'ok',
+        text: 'AI English draft brief populated. Complete Hindi translation & verification before publishing.',
+      });
+    } catch (err) {
+      setLocalError(extractReadableErrorMessage(err, 'Unable to generate AI draft brief.'));
+    } finally {
+      setAiGenerating(false);
     }
   }
 
@@ -288,25 +424,25 @@ export function AdminNewsDesk({
     savingRef.current = true;
     setSaving(true);
     try {
-      const alreadyPersistedDraft = Boolean(
-        editingArticle ||
-          (pendingArticleIdRef.current &&
-            data.articles.some((a) => a.id === pendingArticleIdRef.current)),
-      );
-      const isNew = !alreadyPersistedDraft;
-
       const baseSlug = sanitizeArticleSlug(enHeadline || hiHeadline, 'dispatch');
       if (!pendingArticleIdRef.current) {
         pendingArticleIdRef.current =
           editingArticle?.id || `${baseSlug.slice(0, 90)}-${Date.now().toString(36)}`;
       }
       const articleId = pendingArticleIdRef.current;
+      // Check authoritative Firestore presence (an unmigrated static article has editingArticle set, but !existsInFirestore)
+      const existsInFirestore = data.articles.some((a) => a.id === articleId);
+      const isNew = !existsInFirestore;
       const slug = editingArticle?.slug
         ? sanitizeArticleSlug(editingArticle.slug, 'dispatch')
         : baseSlug.slice(0, 140);
 
       const nowMs = Date.now();
       const resolvedHours = resolveDurationHours(durationPreset, customHours);
+      const parsedHistoricalMs = parseLegacyPublishedDateMs(publishedDateIso);
+      const originalDateIso = editingArticle
+        ? toIstIsoDateInput(editingArticle.publishedAtMs, editingArticle.publishedAt)
+        : '';
 
       let nextStatus: EditorialWorkflowStatus = editingArticle?.status || 'Draft';
       let publishedAt = editingArticle?.publishedAt;
@@ -314,26 +450,48 @@ export function AdminNewsDesk({
       let expiresAtMs = editingArticle?.expiresAtMs ?? null;
       let finalPreset = durationPreset;
       let finalHours = resolvedHours;
+      let nextRetainedPrivate = Boolean(editingArticle?.retainedPrivate);
 
       if (targetMode === 'publish') {
         nextStatus = 'Published';
-        publishedAtMs = nowMs;
+        nextRetainedPrivate = false;
+        if (publishedDateMode === 'preserve' && parsedHistoricalMs !== null) {
+          if (editingArticle && publishedDateIso === originalDateIso && editingArticle.publishedAt) {
+            publishedAt = editingArticle.publishedAt;
+            publishedAtMs = editingArticle.publishedAtMs ?? parsedHistoricalMs;
+          } else {
+            publishedAtMs = parsedHistoricalMs;
+            publishedAt = formatPublishedDateLabel(parsedHistoricalMs);
+          }
+        } else {
+          publishedAtMs = nowMs;
+          publishedAt = formatPublishedDateLabel(nowMs);
+        }
         expiresAtMs = computeExpiresAtMs(nowMs, resolvedHours);
-        publishedAt = new Date(nowMs).toLocaleDateString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-        });
       } else if (targetMode === 'minor_edit' && editingArticle) {
-        // Minor edits strictly preserve original publishedAtMs and expiresAtMs!
+        // Minor corrections strictly preserve status, verification, retainedPrivate, and existing expiry!
         const preserved = applyMinorEditPreservingExpiry(editingArticle, {});
-        publishedAt = preserved.publishedAt;
-        publishedAtMs = preserved.publishedAtMs ?? null;
+        nextStatus = editingArticle.status || 'Published';
+        if (publishedDateMode === 'preserve' && parsedHistoricalMs !== null && publishedDateIso !== originalDateIso) {
+          publishedAtMs = parsedHistoricalMs;
+          publishedAt = formatPublishedDateLabel(parsedHistoricalMs);
+        } else {
+          publishedAt = preserved.publishedAt || (preserved.publishedAtMs ? formatPublishedDateLabel(preserved.publishedAtMs) : undefined);
+          publishedAtMs = preserved.publishedAtMs ?? parsedHistoricalMs ?? null;
+        }
         expiresAtMs = preserved.expiresAtMs ?? null;
         finalPreset = preserved.durationPreset || durationPreset;
         finalHours = preserved.durationHours || resolvedHours;
       } else {
         nextStatus = 'Draft';
+        nextRetainedPrivate = false;
+        if (publishedDateMode === 'preserve' && parsedHistoricalMs !== null && editingArticle) {
+          publishedAtMs = parsedHistoricalMs;
+          publishedAt =
+            publishedDateIso === originalDateIso && editingArticle.publishedAt
+              ? editingArticle.publishedAt
+              : formatPublishedDateLabel(parsedHistoricalMs);
+        }
       }
 
       // Save attached media first if new photo or YouTube asset, reusing mediaId on retries
@@ -419,7 +577,12 @@ export function AdminNewsDesk({
           entities: [],
           author: author.trim().slice(0, 120) || 'SakarBazaar Editorial Desk',
           status: nextStatus,
-          verificationStatus: nextStatus === 'Published' ? 'verified' : 'awaiting_verification',
+          verificationStatus:
+            nextStatus === 'Published'
+              ? 'verified'
+              : targetMode === 'minor_edit' && editingArticle?.verificationStatus
+                ? editingArticle.verificationStatus
+                : 'awaiting_verification',
           sourceName: sourceName.trim().slice(0, 160),
           sourceUrl: sourceUrl.trim().slice(0, 500),
           mediaId: finalMediaId || '',
@@ -432,13 +595,16 @@ export function AdminNewsDesk({
           publishedAt,
           publishedAtMs,
           expiresAtMs,
-          retainedPrivate: false,
+          retainedPrivate: nextRetainedPrivate,
           featuredPlacement,
           featuredOrder: featuredPlacement === 'main' ? 0 : featuredPlacement === 'secondary' ? 1 : 99,
           isPaid,
           paidDisclosureLabel: isPaid ? paidDisclosureLabel.trim().slice(0, 64) || 'Partner Disclosure' : '',
           deletionStatus: 'none',
-          createdByUid: editingArticle?.createdByUid || userUid,
+          createdByUid:
+            editingArticle?.createdByUid && editingArticle.createdByUid !== 'static_catalog'
+              ? editingArticle.createdByUid
+              : userUid,
         },
       });
 
@@ -570,6 +736,69 @@ export function AdminNewsDesk({
               placeholder="Optional https://..."
             />
           </label>
+        </div>
+
+        {/* Optional Cost-Gated AI Brief Helper */}
+        <div className="sb-admin-subpanel" style={{ marginBottom: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong>Optional EN Draft Brief Helper</strong>
+              <span className={`pill ${aiServerStatus?.enabled ? 'sb-pill-teal' : 'sb-pill-muted'}`}>
+                {aiServerStatus?.enabled
+                  ? `Enabled (${aiServerStatus.model})`
+                  : 'Kill-Switch Active (Rs 0 AI API Spend)'}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setAiHelperOpen((prev) => !prev)}
+            >
+              {aiHelperOpen ? 'Hide Helper' : 'Open Helper'}
+            </button>
+          </div>
+          {aiHelperOpen && (
+            <div style={{ marginTop: '10px' }}>
+              <p className="meta" style={{ marginTop: 0 }}>
+                {aiServerStatus && !aiServerStatus.enabled
+                  ? 'External Gemini brief generation is disabled (ENABLE_GEMINI_AI_BRIEF is not "true" or API key absent). External Gemini billing is separate from the Firebase Spark free tier. Compose manually below.'
+                  : 'Generates an English summary aid (<99 words) into the draft form only. Both English and Hindi versions remain mandatory before publishing.'}
+              </p>
+              <label className="sb-form-field">
+                <span>Source Material / Press Release Excerpt</span>
+                <textarea
+                  rows={3}
+                  value={aiSourceMaterial}
+                  onChange={(e) => setAiSourceMaterial(e.target.value)}
+                  placeholder="Paste verified exchange filing or press note text (30+ chars)..."
+                  disabled={!aiServerStatus?.enabled}
+                />
+              </label>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn ghost sb-admin-touch-btn"
+                  disabled={!aiServerStatus?.enabled || aiGenerating}
+                  onClick={() => void handleGenerateAiBrief()}
+                >
+                  {aiGenerating ? 'Generating Brief…' : 'Draft EN Headline & Summary'}
+                </button>
+                {aiLastResult && (
+                  <span className="meta">
+                    Generated {aiLastResult.wordCount} words ·{' '}
+                    {aiLastResult.verificationChecklist.length} checklist items
+                  </span>
+                )}
+              </div>
+              {aiLastResult && aiLastResult.verificationChecklist.length > 0 && (
+                <ul className="meta" style={{ margin: '8px 0 0', paddingLeft: '18px' }}>
+                  {aiLastResult.verificationChecklist.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Language view switcher for smaller screens */}
@@ -726,6 +955,29 @@ export function AdminNewsDesk({
             </label>
           )}
 
+          <div className="sb-form-grid" style={{ marginTop: '10px' }}>
+            <label className="sb-form-field">
+              <span>Publication Date Handling</span>
+              <select
+                value={publishedDateMode}
+                onChange={(e) => setPublishedDateMode(e.target.value as 'preserve' | 'today')}
+              >
+                <option value="preserve">Preserve / Specify Historical Date</option>
+                <option value="today">Stamp Today&apos;s Date on Publish</option>
+              </select>
+            </label>
+            {publishedDateMode === 'preserve' && (
+              <label className="sb-form-field">
+                <span>Historical Publication Date (IST)</span>
+                <input
+                  type="date"
+                  value={publishedDateIso}
+                  onChange={(e) => setPublishedDateIso(e.target.value)}
+                />
+              </label>
+            )}
+          </div>
+
           <div className="sb-admin-checkbox-row">
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
               <input
@@ -777,7 +1029,7 @@ export function AdminNewsDesk({
               className={`sb-filter-tab${mediaMode === 'existing' ? ' active' : ''}`}
               onClick={() => setMediaMode('existing')}
             >
-              Reuse Media Library ({data.media.length})
+              Reuse Media Library ({reusableMediaOptions.length})
             </button>
           </div>
 
@@ -873,9 +1125,9 @@ export function AdminNewsDesk({
                 onChange={(e) => setSelectedExistingMediaId(e.target.value)}
               >
                 <option value="">Select media asset…</option>
-                {data.media.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.fileName} ({m.mediaType}) — {m.credit || 'No credit'}
+                {reusableMediaOptions.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
@@ -892,13 +1144,23 @@ export function AdminNewsDesk({
           >
             Preview EN &amp; हिंदी
           </button>
+          {editingArticle && (
+            <button
+              type="button"
+              className="btn ghost sb-admin-touch-btn"
+              disabled={saving}
+              onClick={() => void executeSave('minor_edit')}
+            >
+              Save Corrections (Keep Status &amp; Expiry)
+            </button>
+          )}
           <button
             type="button"
             className="btn ghost sb-admin-touch-btn"
             disabled={saving}
-            onClick={() => void executeSave(editingArticle?.status === 'Published' ? 'minor_edit' : 'draft')}
+            onClick={() => void executeSave('draft')}
           >
-            {editingArticle?.status === 'Published' ? 'Save Minor Edit (Keep Expiry)' : 'Save Draft'}
+            {editingArticle ? 'Save as Draft' : 'Save Draft'}
           </button>
           <button
             type="button"
@@ -914,7 +1176,7 @@ export function AdminNewsDesk({
               setConfirmPublishOpen(true);
             }}
           >
-            Publish Article →
+            Publish / Republish →
           </button>
         </div>
       </section>
@@ -964,6 +1226,20 @@ export function AdminNewsDesk({
             {(mediaMode === 'youtube' && parsedYouTube) && (
               <img src={parsedYouTube.thumbnailUrl} alt="YouTube preview" style={{ width: '100%', maxHeight: '260px', objectFit: 'cover', borderRadius: '8px', marginBottom: '12px' }} />
             )}
+            {(mediaMode === 'existing' && selectedExistingMediaId) && (() => {
+              const pay = data.payloadMap[selectedExistingMediaId]?.dataUrl;
+              const fsMed = data.media.find((m) => m.id === selectedExistingMediaId);
+              const staticMed = MEDIA_ASSETS.find((m) => m.id === selectedExistingMediaId);
+              const imgUrl = pay || fsMed?.poster || staticMed?.posterUrl || staticMed?.publicUrl;
+              if (!imgUrl) return null;
+              return (
+                <img
+                  src={imgUrl}
+                  alt="Existing media preview"
+                  style={{ width: '100%', maxHeight: '260px', objectFit: 'cover', borderRadius: '8px', marginBottom: '12px' }}
+                />
+              );
+            })()}
             <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
               {previewLang === 'hi' ? hiBody || '(हिंदी लेख अभी खाली है)' : enBody || '(English article body blank)'}
             </div>
